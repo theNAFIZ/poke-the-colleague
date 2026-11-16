@@ -54,6 +54,8 @@ pub struct Peer {
     pub id: String,
     pub name: String,
     pub presence: Presence,
+    pub in_call: bool,
+    pub locked: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -62,13 +64,17 @@ pub enum Event {
     State { state: ConnState },
     /// Full snapshot of online teammates (excluding ourselves), sorted by name.
     Peers { peers: Vec<Peer> },
-    Poke { from: String, from_name: String, pid: String, message: Option<String>, ts: u64 },
+    /// `all` = this was a "poke everyone".
+    Poke { from: String, from_name: String, pid: String, message: Option<String>, ts: u64, all: bool },
     Reply { from: String, from_name: String, pid: String, kind: ReplyKind },
+    /// For a poke-all there is one `Ack` per recipient; `to == "*"` means
+    /// the poke-all reached nobody (or could not be sent at all).
     Ack { pid: String, to: String, status: AckStatus },
 }
 
 enum Cmd {
     Poke { to: String, pid: String, message: Option<String> },
+    PokeAll { pid: String, message: Option<String> },
     Reply { to: String, pid: String, kind: ReplyKind },
     Profile(Profile),
     ReconnectNow,
@@ -128,6 +134,14 @@ impl Client {
         let pid = uuid::Uuid::new_v4().simple().to_string();
         let message = message.map(|m| truncate_chars(m, MAX_MESSAGE_CHARS)).filter(|m| !m.is_empty());
         let _ = self.tx.send(Cmd::Poke { to: to.to_string(), pid: pid.clone(), message });
+        pid
+    }
+
+    /// Poke everybody currently online in the team with one message.
+    pub fn poke_all(&self, message: Option<&str>) -> String {
+        let pid = uuid::Uuid::new_v4().simple().to_string();
+        let message = message.map(|m| truncate_chars(m, MAX_MESSAGE_CHARS)).filter(|m| !m.is_empty());
+        let _ = self.tx.send(Cmd::PokeAll { pid: pid.clone(), message });
         pid
     }
 
@@ -221,6 +235,9 @@ impl Runner {
                         None | Some(Cmd::Shutdown) => return,
                         Some(Cmd::Poke { to, pid, .. }) => {
                             self.emit(Event::Ack { pid, to, status: AckStatus::NotConnected })
+                        }
+                        Some(Cmd::PokeAll { pid, .. }) => {
+                            self.emit(Event::Ack { pid, to: "*".into(), status: AckStatus::NotConnected })
                         }
                         Some(Cmd::Reply { .. }) => {}
                         Some(Cmd::Profile(p)) => self.profile = sanitize_profile(p),
@@ -329,6 +346,12 @@ impl Runner {
                             let body = self.keys.seal(&aad, &serde_json::to_vec(&body).expect("serializable"));
                             ClientMsg::Poke { to, pid, body }
                         }
+                        Some(Cmd::PokeAll { pid, message }) => {
+                            let body = PokeBody { message, ts: now_secs() };
+                            let aad = aad_poke_all(&self.client_id, &pid);
+                            let body = self.keys.seal(&aad, &serde_json::to_vec(&body).expect("serializable"));
+                            ClientMsg::PokeAll { pid, body }
+                        }
                         Some(Cmd::Reply { to, pid, kind }) => {
                             let body = ReplyBody { kind, ts: now_secs() };
                             let aad = aad_reply(&self.client_id, &to, &pid);
@@ -357,7 +380,7 @@ impl Runner {
         let p: Profile = serde_json::from_slice(&raw).ok()?;
         let name = truncate_chars(&p.name, MAX_NAME_CHARS);
         let name = if name.is_empty() { "Unnamed".to_string() } else { name };
-        Some(Peer { id: id.to_string(), name, presence: p.presence })
+        Some(Peer { id: id.to_string(), name, presence: p.presence, in_call: p.in_call, locked: p.locked })
     }
 
     fn emit_peers(&self, peers: &HashMap<String, Peer>) {
@@ -418,8 +441,8 @@ impl Runner {
                     self.emit_peers(peers);
                 }
             }
-            ServerMsg::Poke { from, pid, body } => {
-                let aad = aad_poke(&from, &self.client_id, &pid);
+            ServerMsg::Poke { from, pid, body, all } => {
+                let aad = if all { aad_poke_all(&from, &pid) } else { aad_poke(&from, &self.client_id, &pid) };
                 let parsed = self.keys.open(&aad, &body).ok().and_then(|b| serde_json::from_slice::<PokeBody>(&b).ok());
                 let Some(pb) = parsed else {
                     warn!("dropping undecryptable poke from {from}");
@@ -434,7 +457,7 @@ impl Runner {
                     return;
                 }
                 let message = pb.message.map(|m| truncate_chars(&m, MAX_MESSAGE_CHARS)).filter(|m| !m.is_empty());
-                self.emit(Event::Poke { from_name: name_of(peers, &from), from, pid, message, ts: pb.ts });
+                self.emit(Event::Poke { from_name: name_of(peers, &from), from, pid, message, ts: pb.ts, all });
             }
             ServerMsg::Reply { from, pid, body } => {
                 let aad = aad_reply(&from, &self.client_id, &pid);

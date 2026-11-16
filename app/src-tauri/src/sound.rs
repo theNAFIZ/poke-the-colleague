@@ -19,6 +19,8 @@ const MAX_RING: Duration = Duration::from_secs(90);
 
 enum Cmd {
     Play { volume: f32 },
+    /// One short, soft "ding-dong" (used while the receiver is in a call).
+    Chime { volume: f32 },
     Stop,
 }
 
@@ -41,6 +43,10 @@ impl Sound {
         let _ = self.tx.send(Cmd::Play { volume: volume.clamp(0.0, 1.0) });
     }
 
+    pub fn chime(&self, volume: f32) {
+        let _ = self.tx.send(Cmd::Chime { volume: volume.clamp(0.0, 1.0) });
+    }
+
     pub fn stop(&self) {
         let _ = self.tx.send(Cmd::Stop);
     }
@@ -48,6 +54,7 @@ impl Sound {
 
 fn audio_thread(rx: mpsc::Receiver<Cmd>) {
     let samples = ring_pattern();
+    let chime = chime_pattern();
     // (device handle, player) while ringing. Opened lazily so a missing or
     // changed audio device (headphones plugged in later) is picked up.
     let mut active: Option<(rodio::MixerDeviceSink, rodio::Player)> = None;
@@ -68,6 +75,21 @@ fn audio_thread(rx: mpsc::Receiver<Cmd>) {
             Cmd::Stop => {
                 if let Some((_, player)) = active.take() {
                     player.stop();
+                }
+            }
+            Cmd::Chime { volume } => {
+                if active.is_some() {
+                    continue; // already ringing
+                }
+                match rodio::DeviceSinkBuilder::open_default_sink() {
+                    Ok(mut handle) => {
+                        handle.log_on_drop(false);
+                        let player = rodio::Player::connect_new(handle.mixer());
+                        player.set_volume(volume);
+                        player.append(SamplesBuffer::new(NonZero::new(1).unwrap(), NonZero::new(RATE).unwrap(), chime.clone()));
+                        player.sleep_until_end(); // < 1 s
+                    }
+                    Err(e) => warn!("cannot open audio output: {e}"),
                 }
             }
             Cmd::Play { volume } => {
@@ -94,31 +116,45 @@ fn audio_thread(rx: mpsc::Receiver<Cmd>) {
 /// Two-tone "ding-dong ding-dong", then a pause; ~2 s, looped.
 fn ring_pattern() -> Vec<f32> {
     let mut out = Vec::new();
-    let tone = |freq: f32, secs: f32, out: &mut Vec<f32>| {
-        let n = (secs * RATE as f32) as usize;
-        let attack = (0.005 * RATE as f32) as usize;
-        let release = (0.04 * RATE as f32) as usize;
-        for i in 0..n {
-            let t = i as f32 / RATE as f32;
-            let env = if i < attack {
-                i as f32 / attack as f32
-            } else if i > n - release {
-                (n - i) as f32 / release as f32
-            } else {
-                1.0
-            };
-            let w = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.75
-                + (2.0 * std::f32::consts::PI * freq * 2.0 * t).sin() * 0.25;
-            out.push(w * env * 0.6);
-        }
-    };
-    let silence = |secs: f32, out: &mut Vec<f32>| out.extend(std::iter::repeat_n(0.0, (secs * RATE as f32) as usize));
     for _ in 0..2 {
-        tone(987.77, 0.14, &mut out); // B5
+        tone(987.77, 0.14, 0.6, &mut out); // B5
         silence(0.04, &mut out);
-        tone(1318.51, 0.22, &mut out); // E6
+        tone(1318.51, 0.22, 0.6, &mut out); // E6
         silence(0.18, &mut out);
     }
     silence(0.9, &mut out);
     out
+}
+
+/// Single soft "ding-dong" (~0.5 s).
+fn chime_pattern() -> Vec<f32> {
+    let mut out = Vec::new();
+    tone(1318.51, 0.12, 0.3, &mut out);
+    silence(0.03, &mut out);
+    tone(987.77, 0.25, 0.3, &mut out);
+    silence(0.1, &mut out);
+    out
+}
+
+fn silence(secs: f32, out: &mut Vec<f32>) {
+    out.extend(std::iter::repeat_n(0.0, (secs * RATE as f32) as usize));
+}
+
+fn tone(freq: f32, secs: f32, amp: f32, out: &mut Vec<f32>) {
+    let n = (secs * RATE as f32) as usize;
+    let attack = (0.005 * RATE as f32) as usize;
+    let release = (0.04 * RATE as f32) as usize;
+    for i in 0..n {
+        let t = i as f32 / RATE as f32;
+        let env = if i < attack {
+            i as f32 / attack as f32
+        } else if i > n - release {
+            (n - i) as f32 / release as f32
+        } else {
+            1.0
+        };
+        let w = (2.0 * std::f32::consts::PI * freq * t).sin() * 0.75
+            + (2.0 * std::f32::consts::PI * freq * 2.0 * t).sin() * 0.25;
+        out.push(w * env * amp);
+    }
 }

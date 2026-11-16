@@ -21,6 +21,8 @@ pub struct Settings {
     pub volume: f32,
     /// Full-screen alert closes itself (and tells the caller "missed") after this.
     pub alert_timeout_secs: u32,
+    /// Treat "microphone in use" as "in a call": quiet notification instead of full-screen.
+    pub detect_calls: bool,
 }
 
 impl Default for Settings {
@@ -35,6 +37,7 @@ impl Default for Settings {
             sound: true,
             volume: 0.8,
             alert_timeout_secs: 60,
+            detect_calls: true,
         }
     }
 }

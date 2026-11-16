@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Poke the Colleague",
   "mainBinaryName": "poke-the-colleague",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "dev.poke.colleague",
   "build": {
     "frontendDist": "../ui"
@@ -51,6 +51,18 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper",
         "silent": true
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBNUJDQzI1MkQ0ODU1MTYKUldRV1ZVZ3RKY3hiNnZsSlJPOWRtTlM5OXU1eHZrdHd5Q3ExSEwvMi94ZHcyTGVIMUJxV0wxdDQK",
+      "endpoints": [
+        "https://github.com/theNAFIZ/poke-the-colleague/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

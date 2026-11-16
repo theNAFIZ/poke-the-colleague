@@ -50,14 +50,27 @@ pub fn poke(state: St, to: String, message: Option<String>) -> Result<String, St
     state.poke(to, message)
 }
 
+/// Returns how many colleagues were poked.
+#[tauri::command]
+pub fn poke_all(state: St, message: Option<String>) -> Result<usize, String> {
+    state.poke_all(message)
+}
+
 #[tauri::command]
 pub fn set_dnd(state: St, dnd: bool) {
     state.set_dnd(dnd);
 }
 
 #[tauri::command]
-pub fn set_prefs(state: St, sound: bool, volume: f32, alert_timeout_secs: u32, autostart: bool) -> Result<(), String> {
-    state.set_prefs(sound, volume, alert_timeout_secs, autostart)
+pub fn set_prefs(
+    state: St,
+    sound: bool,
+    volume: f32,
+    alert_timeout_secs: u32,
+    autostart: bool,
+    detect_calls: bool,
+) -> Result<(), String> {
+    state.set_prefs(sound, volume, alert_timeout_secs, autostart, detect_calls)
 }
 
 #[tauri::command]
@@ -91,6 +104,17 @@ pub async fn respond(state: St<'_>, pid: String, kind: ReplyKind) -> Result<(), 
 pub async fn respond_all(state: St<'_>, kind: ReplyKind) -> Result<(), String> {
     state.respond_all(kind);
     Ok(())
+}
+
+/// Returns the newer version, or `None` when up to date.
+#[tauri::command]
+pub async fn check_update(app: AppHandle, state: St<'_>) -> Result<Option<String>, String> {
+    crate::update::check(&app, state.inner()).await
+}
+
+#[tauri::command]
+pub async fn install_update(app: AppHandle, state: St<'_>) -> Result<(), String> {
+    crate::update::install(&app, state.inner()).await
 }
 
 #[tauri::command]

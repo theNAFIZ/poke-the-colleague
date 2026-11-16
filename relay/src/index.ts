@@ -24,6 +24,8 @@ const MAX_FRAME = 8 * 1024;
 const MAX_PROFILE = 1024;
 const MAX_BODY = 4096;
 const POKES_PER_MINUTE = 12;
+/** Same as POKE_COOLDOWN_SECS in crates/poke-core/src/protocol.rs. */
+const COOLDOWN_MS = 60_000;
 const WS_OPEN = 1;
 
 /** Must match `team_id_for_token` in crates/poke-core/src/crypto.rs. */
@@ -76,12 +78,17 @@ interface Attachment {
   profile: string | null;
   /** Timestamps (ms) of recent pokes, for rate limiting. */
   pokes: number[];
+  /** Recipient id -> time (ms) we last delivered a poke to them (pruned after a minute). */
+  last?: Record<string, number>;
+  /** Time (ms) of our last "poke everyone". */
+  all?: number;
 }
 
 type ClientFrame =
   | { t: "hello"; v: number; profile: string }
   | { t: "profile"; profile: string }
   | { t: "poke"; to: string; pid: string; body: string }
+  | { t: "poke_all"; pid: string; body: string }
   | { t: "reply"; to: string; pid: string; body: string };
 
 export class Team extends DurableObject<Env> {
@@ -143,15 +150,57 @@ export class Team extends DurableObject<Env> {
         if (!ID_RE.test(frame.to) || !PID_RE.test(frame.pid) || !isStr(frame.body, MAX_BODY)) {
           return this.error(ws, "bad_poke", "invalid poke");
         }
-        const now = Date.now();
-        me.pokes = me.pokes.filter((t) => now - t < 60_000);
+        const now = prune(me);
         if (me.pokes.length >= POKES_PER_MINUTE) {
           return send(ws, { t: "ack", pid: frame.pid, to: frame.to, status: "rate_limited" });
         }
-        me.pokes.push(now);
-        ws.serializeAttachment(me);
+        if (now - Math.max(me.last![frame.to] ?? 0, me.all ?? 0) < COOLDOWN_MS) {
+          return send(ws, { t: "ack", pid: frame.pid, to: frame.to, status: "too_soon" });
+        }
         const delivered = this.forward(frame.to, { t: "poke", from: me.id, pid: frame.pid, body: frame.body });
+        if (delivered) {
+          me.pokes.push(now);
+          me.last![frame.to] = now;
+          ws.serializeAttachment(me);
+        }
         return send(ws, { t: "ack", pid: frame.pid, to: frame.to, status: delivered ? "delivered" : "offline" });
+      }
+
+      case "poke_all": {
+        if (me.profile === null) return this.error(ws, "not_ready", "send hello first");
+        if (!PID_RE.test(frame.pid) || !isStr(frame.body, MAX_BODY)) {
+          return this.error(ws, "bad_poke", "invalid poke_all");
+        }
+        const now = prune(me);
+        if (me.pokes.length >= POKES_PER_MINUTE) {
+          return send(ws, { t: "ack", pid: frame.pid, to: "*", status: "rate_limited" });
+        }
+        if (now - (me.all ?? 0) < COOLDOWN_MS) {
+          return send(ws, { t: "ack", pid: frame.pid, to: "*", status: "too_soon" });
+        }
+        const msg = { t: "poke", from: me.id, pid: frame.pid, body: frame.body, all: true };
+        let reached = 0;
+        for (const peer of this.online()) {
+          if (peer.id === me.id) continue;
+          // Someone we poked individually moments ago is skipped, not poked twice.
+          if (now - (me.last![peer.id] ?? 0) < COOLDOWN_MS) {
+            send(ws, { t: "ack", pid: frame.pid, to: peer.id, status: "too_soon" });
+            continue;
+          }
+          if (this.forward(peer.id, msg)) {
+            reached++;
+            send(ws, { t: "ack", pid: frame.pid, to: peer.id, status: "delivered" });
+          }
+        }
+        if (reached === 0) {
+          return send(ws, { t: "ack", pid: frame.pid, to: "*", status: "offline" });
+        }
+        // `last` is not filled per recipient on purpose (it must stay < 2 KB);
+        // `all` covers everyone for the next minute instead.
+        me.pokes.push(now);
+        me.all = now;
+        ws.serializeAttachment(me);
+        return;
       }
 
       case "reply": {
@@ -234,6 +283,14 @@ export class Team extends DurableObject<Env> {
   private error(ws: WebSocket, code: string, msg: string) {
     send(ws, { t: "error", code, msg });
   }
+}
+
+/** Drop entries older than the rate-limit windows; returns now. */
+function prune(me: Attachment): number {
+  const now = Date.now();
+  me.pokes = me.pokes.filter((t) => now - t < 60_000);
+  me.last = Object.fromEntries(Object.entries(me.last ?? {}).filter(([, t]) => now - t < COOLDOWN_MS));
+  return now;
 }
 
 function send(ws: WebSocket, msg: object) {

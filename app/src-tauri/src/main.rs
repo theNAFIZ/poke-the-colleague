@@ -6,12 +6,14 @@ mod overlay;
 mod settings;
 mod sound;
 mod state;
+mod update;
+mod watch;
 
 use std::time::{Duration, SystemTime};
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 
 use state::{AppState, Shared};
@@ -30,18 +32,22 @@ fn main() {
         .init();
 
     let start_hidden = std::env::args().any(|a| a == HIDDEN_ARG);
+    // TLS crypto provider for both the relay client and the updater.
+    poke_core::init_tls();
 
     tauri::Builder::default()
         // Must be first: a second launch just brings the existing window forward.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![HIDDEN_ARG])))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
             commands::save_settings,
             commands::generate_team_code,
             commands::parse_invite,
             commands::poke,
+            commands::poke_all,
             commands::set_dnd,
             commands::set_prefs,
             commands::clear_missed,
@@ -50,6 +56,8 @@ fn main() {
             commands::get_incoming,
             commands::respond,
             commands::respond_all,
+            commands::check_update,
+            commands::install_update,
             commands::hide_window,
             commands::quit,
         ])
@@ -61,6 +69,8 @@ fn main() {
             build_tray(app.handle(), &state)?;
             state.restart_client();
             watch_for_resume(state.clone());
+            watch::spawn(state.clone());
+            update::spawn_checker(app.handle().clone(), state.clone());
 
             if !start_hidden || !state.is_configured() {
                 show_main(app.handle());
@@ -98,9 +108,10 @@ fn build_tray(app: &AppHandle, state: &Shared) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Poke", true, None::<&str>)?;
     let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
     let test = MenuItem::with_id(app, "test", "Show test alert", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &dnd, &test, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &dnd, &test, &updates, &sep, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Poke the Colleague")
@@ -117,6 +128,21 @@ fn build_tray(app: &AppHandle, state: &Shared) -> tauri::Result<()> {
                 }
                 "test" => {
                     tauri::async_runtime::spawn(async move { state.test_alert() });
+                }
+                "updates" => {
+                    let app = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        show_main(&app);
+                        match update::check(&app, &state).await {
+                            Ok(Some(_)) => {} // banner appears in the main window
+                            Ok(None) => {
+                                let _ = app.emit_to("main", "toast", "You have the latest version.");
+                            }
+                            Err(e) => {
+                                let _ = app.emit_to("main", "toast", format!("Update check failed: {e}"));
+                            }
+                        }
+                    });
                 }
                 "quit" => {
                     let app = app.clone();

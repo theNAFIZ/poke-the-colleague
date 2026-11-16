@@ -70,6 +70,13 @@
     </nav>
 
     <main>
+      <div id="update-banner" class="banner update hidden">
+        <div class="grow">
+          <b id="update-title"></b>
+          <div class="hint" id="update-hint"></div>
+        </div>
+        <button id="update-install" type="button" class="primary">Update &amp; restart</button>
+      </div>
       <!-- People -->
       <div id="tab-people">
         <div id="conn-banner" class="banner bad hidden">
@@ -83,13 +90,27 @@
         <div class="composer">
           <input id="search" type="search" placeholder="Find a colleague…" autocomplete="off" />
           <input id="message" type="text" maxlength="280" placeholder="Message (optional) — e.g. “Got a minute?”" autocomplete="off" />
+          <div class="quick" id="quick">
+            <button type="button" class="chip-btn" data-msg="Join the meeting 📅">📅 Join the meeting</button>
+            <button type="button" class="chip-btn" data-msg="Lunch time 🍽️">🍽️ Lunch time</button>
+            <button type="button" class="chip-btn" data-msg="Nasta time 🥟">🥟 Nasta</button>
+          </div>
+          <button id="poke-all" type="button" class="block">📣 Poke everyone</button>
+          <div id="poke-all-confirm" class="banner info hidden">
+            <div class="grow" id="poke-all-text"></div>
+            <button id="poke-all-yes" type="button" class="primary">Poke all</button>
+            <button id="poke-all-no" type="button" class="ghost">Cancel</button>
+          </div>
         </div>
         <div id="peers" class="list"></div>
       </div>
 
       <!-- Activity -->
       <div id="tab-activity" class="hidden">
-        <div class="section-title">Pokes you received</div>
+        <div class="row" style="margin-top:4px">
+          <div class="section-title grow" style="margin:8px 0">Pokes you received</div>
+          <button id="mark-read" type="button" class="ghost hidden">Mark all read</button>
+        </div>
         <div id="history"></div>
         <div class="section-title">Pokes you sent</div>
         <div id="sent"></div>
@@ -125,6 +146,12 @@
             <div class="grow">Start when I log in</div>
             <label class="switch green"><input type="checkbox" id="pref-autostart" /><span class="track"></span></label>
           </div>
+          <div class="row" style="margin-top:14px">
+            <div class="grow">Detect calls (microphone in use)
+              <div class="hint" style="margin-top:2px">During Teams/Zoom/Meet calls, pokes arrive as a quiet notification instead of full-screen.</div>
+            </div>
+            <label class="switch green"><input type="checkbox" id="pref-calls" /><span class="track"></span></label>
+          </div>
           <button id="test-alert" type="button" class="block" style="margin-top:14px">Show a test alert</button>
         </div>
 
@@ -145,6 +172,7 @@
 
         <div class="row">
           <div class="grow hint">Poke the Colleague v<span id="version"></span></div>
+          <button id="check-update" type="button" class="ghost">Check for updates</button>
           <button id="quit" type="button" class="danger">Quit</button>
         </div>
       </div>

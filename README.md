@@ -53,7 +53,20 @@ Then run `npx wrangler deploy` again.
 
 ## 2. Install the app
 
-Get the installers from the CI build artifacts, or a GitHub release, or build them yourself (see below).
+**Updates are built in (from 0.2.0).** Poke checks GitHub Releases at startup and every 6 hours, and you can also use **Settings → Check for updates** or the tray menu. When a new version exists, a banner offers **Update & restart**.
+- Windows updates install per user, with no admin prompt.
+- AppImages replace themselves.
+- `.deb` installs ask for your password.
+
+Every update is signed in CI, and the app refuses files whose signature doesn't match. Version 0.1.0 has no updater, so install 0.2.0 by hand once.
+
+Download the installers from the repository's **Releases** page, or build them yourself (see below). CI publishes a release named `v<version>` automatically on every push to `main`. Bump `version` in `Cargo.toml` and `app/src-tauri/tauri.conf.json` to create a new release. Pushing again without bumping the version replaces the files in the existing release.
+
+| File | For |
+|---|---|
+| `poke-the-colleague_<version>_windows_x64-setup.exe` | Windows 10/11 |
+| `poke-the-colleague_<version>_amd64.deb` | Debian/Ubuntu (installs with `sudo`) |
+| `poke-the-colleague_<version>_amd64.AppImage` | Any Linux, no root needed |
 
 **Windows:** run `Poke the Colleague_x.y.z_x64-setup.exe`.
 - It installs per user into `%LOCALAPPDATA%`, so **no admin prompt** appears.
@@ -80,6 +93,14 @@ The part after `#` is the **team code**. Anyone who has it can join the team, so
 - **Poke someone:** click **Poke** next to their name. You can add a short message first. Typing a name and pressing **Enter** also works.
 - **What the caller sees:** *Delivered → Alert showing 👀 → On the way 🏃 / In 5 min ⏳ / Busy ⛔*, or *No answer* if the alert times out. You also get *Offline* immediately if they aren't connected, which beats shouting.
 - **When you're poked:** a full-screen alert appears on every monitor and a ring plays in your headphones. Answer with **Enter** (Coming), **2** (5 min), **3** (Busy) or **Esc** (Dismiss).
+- **Poke everyone:** use **📣 Poke everyone** for things like "Join the meeting" or "Lunch time". The quick buttons fill in the message, and the app asks you to confirm before sending. Everyone online gets the alert, and Activity shows a single row summarising their answers.
+- **Once a minute per person:** after you poke someone, their button shows a countdown until you can poke them again. *Poke everyone* is also limited to once a minute, and it skips anyone you poked individually in the last minute. The relay enforces the same rule.
+- **In a call (automatic):** Poke treats "microphone in use" as being in a call. That covers Teams, Zoom, Meet in a browser, Slack huddles and so on.
+  - Your colleagues see **In a call 📞** next to your name.
+  - A poke during a call arrives as a quiet desktop notification with a soft chime, not the full-screen alert, so it can't appear on a screen share.
+  - Poke only checks *whether* the microphone is in use and by which app. It never listens.
+  - You can turn this off under **Settings → Detect calls**.
+- **Screen locked (automatic):** colleagues see **Away 🔒** next to your name. Pokes that arrive while your screen is locked are held back. When you unlock, Poke opens **Activity** with everything you missed, each with a **👋 Poke back** button. The same summary appears when a call ends.
 - **Do not disturb (DND):** use it for demos and screen sharing. Pokes are collected quietly and shown under **Activity**, and the caller is told you're in DND.
 - **Settings → Show a test alert** previews the alert on your own machine.
 - Closing the window keeps Poke running in the tray. Use **Quit** in the tray menu or in Settings to exit.
@@ -119,6 +140,13 @@ npx tauri dev                           # run the app (use relay address localho
 npx tauri build --bundles deb,appimage  # Linux packages   -> target/release/bundle/
 npx tauri build --bundles nsis          # Windows installer (run on Windows)
 ```
+
+**Update signing key (for maintainers).** CI signs every release with a private key stored in the GitHub secret `TAURI_SIGNING_PRIVATE_KEY`. The matching public key is in `app/src-tauri/tauri.conf.json` (`plugins.updater.pubkey`).
+- **Back up the private key** (`~/.tauri/poke-the-colleague.key` on the machine that created it) somewhere safe, such as a password manager.
+- If the key is lost, installed apps can no longer be updated. You'd have to generate a new key and everyone would reinstall by hand.
+- **Never commit the private key.**
+
+To test the updater locally, point a debug build at your own manifest: `POKE_UPDATE_URL=http://localhost:8000/latest.json`.
 
 **Headless test client:** useful for testing without a second PC.
 

@@ -35,8 +35,9 @@ function render() {
     shownAt = Date.now();
   }
   $("avatar").textContent = initials(top.from_name);
-  $("title").textContent = `${top.from_name} is calling you`;
-  document.title = `${top.from_name} is calling you`;
+  $("kicker").textContent = top.all ? "📣 Message for everyone" : "Someone is calling you";
+  $("title").textContent = top.all ? `${top.from_name} is calling everyone` : `${top.from_name} is calling you`;
+  document.title = $("title").textContent;
   const msg = $("message");
   msg.hidden = !top.message;
   msg.textContent = top.message ? `“${top.message}”` : "";

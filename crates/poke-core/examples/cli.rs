@@ -4,7 +4,8 @@
 //!   cargo run -p poke-core --example cli -- --relay localhost:8787 --code <CODE> --name Bob --auto-reply coming
 //!   cargo run -p poke-core --example cli -- --relay localhost:8787 --code <CODE> --name Alice --poke Bob --msg "Lunch?"
 //!
-//! Interactive commands on stdin: `poke <name|id> [message]`, `reply <kind>`,
+//! Flags `--in-call` / `--locked` advertise that presence (for testing).
+//! Interactive commands on stdin: `poke <name|id> [message]`, `poke-all [message]`, `reply <kind>`,
 //! `dnd on|off`, `quit`. Events are printed as JSON lines.
 
 use std::collections::HashMap;
@@ -46,7 +47,12 @@ async fn main() {
         relay_url: relay,
         team_code: code,
         client_id: id,
-        profile: Profile { name, presence: Presence::Available },
+        profile: Profile {
+            name,
+            presence: Presence::Available,
+            in_call: args.iter().any(|a| a == "--in-call"),
+            locked: args.iter().any(|a| a == "--locked"),
+        },
         proxy: arg(&args, "--proxy"),
     };
     let (client, mut events) = Client::start(cfg).expect("start client");
@@ -114,9 +120,15 @@ async fn main() {
                     (Some("dnd"), Some(v), _) => client.set_profile(Profile {
                         name: arg(&args, "--name").unwrap(),
                         presence: if v == "on" { Presence::Dnd } else { Presence::Available },
+                        ..Default::default()
                     }),
+                    (Some("poke-all"), first, rest) => {
+                        let msg = first.map(|f| match rest { Some(r) => format!("{f} {r}"), None => f.to_string() });
+                        let pid = client.poke_all(msg.as_deref());
+                        eprintln!("sent poke-all {pid}");
+                    }
                     (Some("quit"), _, _) => { client.shutdown(); tokio::time::sleep(Duration::from_millis(200)).await; return; }
-                    _ => eprintln!("commands: poke <name|id> [msg] | reply <kind> | dnd on|off | quit"),
+                    _ => eprintln!("commands: poke <name|id> [msg] | poke-all [msg] | reply <kind> | dnd on|off | quit"),
                 }
             }
         }

@@ -52,6 +52,9 @@ const STATUS = {
   offline: ["Offline", "bad"],
   rate_limited: ["Slow down", "bad"],
   not_connected: ["Not sent — you're offline", "bad"],
+  too_soon: ["Already poked < 1 min ago", "warn"],
+  in_call: ["In a call — notified quietly 📞", "warn"],
+  locked: ["Away — sees it when back 🔒", "warn"],
 };
 const OUTCOME = {
   coming: "You answered: on the way",
@@ -60,7 +63,17 @@ const OUTCOME = {
   dismissed: "Dismissed",
   missed: "Missed",
   dnd: "Arrived during do-not-disturb",
+  in_call: "Arrived during your call",
+  locked: "Arrived while your screen was locked",
 };
+
+// Shorter wording inside a colleague's row, where their status chip already
+// says "In a call" / "Away".
+const ROW_STATUS = { in_call: ["Notified quietly", "warn"], locked: ["Sees it later", "warn"] };
+
+function secsLeft(untilMs) {
+  return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
+}
 
 let toastTimer;
 function toast(text) {
@@ -90,9 +103,18 @@ function render() {
 
   const c = snap.conn;
   const dot = $("conn-dot");
-  dot.className = "dot " + (snap.dnd && c.state === "online" ? "dnd" : c.state);
+  const quiet = c.state === "online" && (snap.dnd || snap.in_call);
+  dot.className = "dot " + (quiet ? "dnd" : c.state);
   $("conn-text").textContent =
-    c.state === "online" ? (snap.dnd ? "Do not disturb" : "Online") : c.state === "connecting" ? "Connecting…" : "Offline";
+    c.state === "online"
+      ? snap.dnd
+        ? "Do not disturb"
+        : snap.in_call
+          ? `In a call (${snap.in_call}) · pokes arrive quietly`
+          : "Online"
+      : c.state === "connecting"
+        ? "Connecting…"
+        : "Offline";
 
   const offline = c.state === "offline";
   $("conn-banner").classList.toggle("hidden", !offline);
@@ -107,9 +129,57 @@ function render() {
   badge.textContent = snap.missed;
   badge.classList.toggle("hidden", snap.missed === 0);
 
+  renderUpdate();
   renderPeers();
+  renderPokeAll();
   renderActivity();
   if (tab === "settings") renderSettingsStatic();
+}
+
+function renderUpdate() {
+  const v = snap.update_version;
+  $("update-banner").classList.toggle("hidden", !v);
+  if (!v) return;
+  $("update-title").textContent = `Version ${v} is available`;
+  const busy = !!snap.update_progress;
+  $("update-hint").textContent =
+    snap.update_progress ||
+    (snap.update_needs_password ? "You'll be asked for your password to install it." : "Takes a few seconds; Poke restarts by itself.");
+  const btn = $("update-install");
+  btn.disabled = busy;
+  btn.textContent = busy ? "Updating…" : "Update & restart";
+}
+
+async function installUpdate() {
+  try {
+    await invoke("install_update");
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function checkUpdate() {
+  const btn = $("check-update");
+  btn.disabled = true;
+  btn.textContent = "Checking…";
+  try {
+    const v = await invoke("check_update");
+    toast(v ? `Version ${v} is available — see the banner at the top` : "You have the latest version.");
+  } catch (e) {
+    toast(`Update check failed: ${e}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Check for updates";
+  }
+}
+
+function renderPokeAll() {
+  const btn = $("poke-all");
+  const wait = secsLeft(snap.poke_all_until);
+  const online = snap.conn.state === "online" && snap.peers.length > 0;
+  btn.disabled = !online || wait > 0;
+  btn.textContent = wait > 0 ? `📣 Poke everyone (again in ${wait}s)` : `📣 Poke everyone${online ? ` (${snap.peers.length})` : ""}`;
+  if (btn.disabled) $("poke-all-confirm").classList.add("hidden");
 }
 
 function latestOutgoing(peerId) {
@@ -138,40 +208,84 @@ function renderPeers() {
     .map((p) => {
       const out = latestOutgoing(p.id);
       const fresh = out && Date.now() - out.sent_at < 10 * 60 * 1000;
-      const [label, cls] = fresh ? STATUS[out.status] || [out.status, ""] : [];
+      const [label, cls] = fresh ? ROW_STATUS[out.status] || STATUS[out.status] || [out.status, ""] : [];
+      const wait = secsLeft(snap.cooldowns[p.id] || 0);
       const sub = [
+        p.locked ? `<span class="chip">Away 🔒</span>` : "",
+        p.in_call ? `<span class="chip warn">In a call 📞</span>` : "",
         p.presence === "dnd" ? `<span class="chip warn">Do not disturb</span>` : "",
         fresh ? `<span class="chip ${cls}">${esc(label)}</span><span>${esc(ago(out.sent_at))}</span>` : "",
       ].join("");
-      return `<div class="peer">
+      const title = p.locked
+        ? "Their screen is locked — they'll see the poke when they're back"
+        : p.in_call
+          ? "They're in a call — they'll get a quiet notification"
+          : "";
+      return `<div class="peer" title="${esc(title)}">
         <div class="avatar" style="${avatarStyle(p.id)}">${esc(initials(p.name))}</div>
         <div class="info"><div class="name">${esc(p.name)}</div><div class="sub">${sub || "Online"}</div></div>
-        <button class="primary" type="button" data-poke="${esc(p.id)}">Poke</button>
+        <button class="primary" type="button" data-poke="${esc(p.id)}" ${wait > 0 ? "disabled" : ""}
+          title="${wait > 0 ? "You can poke the same person once a minute" : ""}">${wait > 0 ? `${wait}s` : "Poke"}</button>
       </div>`;
     })
     .join("");
 }
 
 function renderActivity() {
+  $("mark-read").classList.toggle("hidden", snap.missed === 0);
+  const online = new Set(snap.peers.map((p) => p.id));
   const h = $("history");
   h.innerHTML = snap.history.length
     ? snap.history
-        .map(
-          (e) => `<div class="event">
-          <div class="what"><b>${esc(e.from_name)}</b> · ${esc(OUTCOME[e.outcome] || e.outcome)}
-            ${e.message ? `<div class="msg">“${esc(e.message)}”</div>` : ""}</div>
-          <div class="when">${esc(ago(e.at))}</div></div>`,
-        )
+        .map((e) => {
+          const canPokeBack = e.unread && online.has(e.from);
+          const wait = secsLeft(snap.cooldowns[e.from] || 0);
+          return `<div class="event ${e.unread ? "unread" : ""}">
+          <div class="what"><b>${esc(e.from_name)}</b>${e.all ? " → everyone" : ""} · ${esc(OUTCOME[e.outcome] || e.outcome)}
+            ${e.message ? `<div class="msg">“${esc(e.message)}”</div>` : ""}
+            ${canPokeBack ? `<div class="actions"><button type="button" data-poke="${esc(e.from)}" ${wait ? "disabled" : ""}>👋 Poke back${wait ? ` (${wait}s)` : ""}</button></div>` : ""}</div>
+          <div class="when">${esc(ago(e.at))}</div></div>`;
+        })
         .join("")
     : `<div class="hint">Nothing yet.</div>`;
 
+  // A "poke everyone" is one row with a summary of everybody's answers.
+  const groups = [];
+  const byPid = new Map();
+  for (const o of snap.outgoing) {
+    if (!o.all) {
+      groups.push([o]);
+      continue;
+    }
+    if (!byPid.has(o.pid)) {
+      byPid.set(o.pid, []);
+      groups.push(byPid.get(o.pid));
+    }
+    byPid.get(o.pid).push(o);
+  }
   const s = $("sent");
-  s.innerHTML = snap.outgoing.length
-    ? snap.outgoing
-        .map((o) => {
-          const [label, cls] = STATUS[o.status] || [o.status, ""];
+  s.innerHTML = groups.length
+    ? groups
+        .map((g) => {
+          const o = g[0];
+          let who, chips;
+          if (o.all) {
+            who = `Everyone (${g.length})`;
+            const counts = {};
+            for (const x of g) counts[x.status] = (counts[x.status] || 0) + 1;
+            chips = Object.entries(counts)
+              .map(([st, n]) => {
+                const [label, cls] = STATUS[st] || [st, ""];
+                return `<span class="chip ${cls}" title="${esc(g.filter((x) => x.status === st).map((x) => x.to_name).join(", "))}">${n} × ${esc(label)}</span>`;
+              })
+              .join(" ");
+          } else {
+            const [label, cls] = STATUS[o.status] || [o.status, ""];
+            who = o.to_name;
+            chips = `<span class="chip ${cls}">${esc(label)}</span>`;
+          }
           return `<div class="event">
-          <div class="what"><b>${esc(o.to_name)}</b> <span class="chip ${cls}">${esc(label)}</span>
+          <div class="what"><b>${esc(who)}</b> ${chips}
             ${o.message ? `<div class="msg">“${esc(o.message)}”</div>` : ""}</div>
           <div class="when">${esc(ago(o.sent_at))}</div></div>`;
         })
@@ -195,6 +309,7 @@ function fillSettings() {
   $("pref-sound").checked = snap.sound;
   $("pref-volume").value = Math.round(snap.volume * 100);
   $("pref-autostart").checked = snap.autostart;
+  $("pref-calls").checked = snap.detect_calls;
   const sel = $("pref-timeout");
   if (![...sel.options].some((o) => +o.value === snap.alert_timeout_secs)) {
     sel.add(new Option(`${snap.alert_timeout_secs} seconds`, snap.alert_timeout_secs));
@@ -205,11 +320,12 @@ function fillSettings() {
 }
 
 function setTab(name) {
+  // Leaving Activity marks what was shown there as read.
+  if (tab === "activity" && name !== "activity" && snap?.missed) invoke("clear_missed");
   tab = name;
   for (const b of document.querySelectorAll("nav.tabs button")) b.classList.toggle("active", b.dataset.tab === name);
   for (const t of ["people", "activity", "settings"]) $("tab-" + t).classList.toggle("hidden", t !== name);
   if (name === "settings") fillSettings();
-  if (name === "activity" && snap?.missed) invoke("clear_missed");
   if (name === "people") $("search").focus();
 }
 
@@ -222,6 +338,26 @@ async function doPoke(id) {
     $("message").value = "";
     const p = snap.peers.find((x) => x.id === id);
     toast(`Poked ${p ? p.name : "colleague"} 👋`);
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function askPokeAll() {
+  const msg = $("message").value.trim();
+  $("poke-all-text").textContent =
+    `Poke all ${snap.peers.length} online colleague${snap.peers.length === 1 ? "" : "s"}` + (msg ? ` with “${msg}”?` : "?");
+  $("poke-all-confirm").classList.remove("hidden");
+  $("poke-all-yes").focus();
+}
+
+async function doPokeAll() {
+  $("poke-all-confirm").classList.add("hidden");
+  const msg = $("message").value.trim();
+  try {
+    const n = await invoke("poke_all", { message: msg || null });
+    $("message").value = "";
+    toast(`Poked ${n} colleague${n === 1 ? "" : "s"} 📣`);
   } catch (e) {
     toast(String(e));
   }
@@ -245,6 +381,7 @@ async function savePrefs() {
       volume: $("pref-volume").value / 100,
       alertTimeoutSecs: +$("pref-timeout").value,
       autostart: $("pref-autostart").checked,
+      detectCalls: $("pref-calls").checked,
     });
   } catch (e) {
     toast(String(e));
@@ -306,6 +443,20 @@ function wire() {
     if (btn.dataset.action === "copy-invite") copyInvite();
   });
   $("search").addEventListener("input", renderPeers);
+  $("history").addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-poke]");
+    if (btn) doPoke(btn.dataset.poke);
+  });
+  $("quick").addEventListener("click", (e) => {
+    const chip = e.target.closest("button[data-msg]");
+    if (!chip) return;
+    $("message").value = chip.dataset.msg;
+    $("message").focus();
+  });
+  $("poke-all").addEventListener("click", askPokeAll);
+  $("poke-all-yes").addEventListener("click", doPokeAll);
+  $("poke-all-no").addEventListener("click", () => $("poke-all-confirm").classList.add("hidden"));
+  $("mark-read").addEventListener("click", () => invoke("clear_missed"));
   // Enter in the search box pokes the only/first match.
   const enterPokes = (e) => {
     if (e.key !== "Enter") return;
@@ -322,7 +473,9 @@ function wire() {
   $("copy-invite").addEventListener("click", copyInvite);
   $("test-alert").addEventListener("click", () => invoke("test_alert"));
   $("quit").addEventListener("click", () => invoke("quit"));
-  for (const id of ["pref-sound", "pref-timeout", "pref-autostart"]) $(id).addEventListener("change", savePrefs);
+  $("update-install").addEventListener("click", installUpdate);
+  $("check-update").addEventListener("click", checkUpdate);
+  for (const id of ["pref-sound", "pref-timeout", "pref-autostart", "pref-calls"]) $(id).addEventListener("change", savePrefs);
   $("pref-volume").addEventListener("change", savePrefs);
 
   $("set-save").addEventListener("click", async () => {
@@ -351,12 +504,24 @@ function wire() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && snap?.configured) invoke("hide_window");
   });
-  // Keep relative times fresh.
-  setInterval(() => snap?.configured && (renderPeers(), renderActivity()), 15000);
+  // Keep relative times and cooldown countdowns fresh.
+  let ticks = 0;
+  setInterval(() => {
+    if (!snap?.configured) return;
+    ticks++;
+    const counting = snap.poke_all_until > Date.now() || Object.values(snap.cooldowns).some((t) => t > Date.now() - 1000);
+    if (counting || ticks % 15 === 0) {
+      renderPeers();
+      renderPokeAll();
+      renderActivity();
+    }
+  }, 1000);
 }
 
 async function init() {
   wire();
+  await listen("show-activity", () => setTab("activity"));
+  await listen("toast", (e) => toast(String(e.payload)));
   await listen("snapshot", (e) => {
     snap = e.payload;
     render();
