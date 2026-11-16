@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Someone is calling you</title>
+  <style>
+    :root {
+      --a: #ff7a30;
+      --b: #ec2678;
+      color-scheme: dark;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Ubuntu, Cantarell, "Noto Sans", sans-serif;
+      color: #fff;
+      background: radial-gradient(ellipse at center, #3a1030 0%, #160a1c 55%, #0b0710 100%);
+      display: grid;
+      place-items: center;
+      user-select: none;
+      -webkit-user-select: none;
+      cursor: default;
+      animation: flash 1.6s ease-in-out infinite;
+    }
+    /* subtle background breathing so it catches peripheral vision */
+    @keyframes flash {
+      0%, 100% { background-color: #160a1c; }
+      50% { background-color: #2a0d26; }
+    }
+    .stage { position: relative; text-align: center; padding: 24px; max-width: min(900px, 92vw); }
+    .pulse { position: relative; width: 180px; height: 180px; margin: 0 auto 36px; }
+    .pulse .ring {
+      position: absolute; inset: 0; border-radius: 50%;
+      border: 4px solid rgba(255, 255, 255, 0.55);
+      animation: ring 2s cubic-bezier(.2,.6,.3,1) infinite;
+    }
+    .pulse .ring:nth-child(2) { animation-delay: .66s; }
+    .pulse .ring:nth-child(3) { animation-delay: 1.33s; }
+    @keyframes ring {
+      0% { transform: scale(1); opacity: .9; }
+      100% { transform: scale(2.6); opacity: 0; }
+    }
+    .avatar {
+      position: absolute; inset: 0; border-radius: 50%;
+      display: grid; place-items: center;
+      background: linear-gradient(135deg, var(--a), var(--b));
+      font-size: 64px; font-weight: 800; letter-spacing: .02em;
+      box-shadow: 0 0 80px rgba(236, 38, 120, .55);
+      animation: bob 1s ease-in-out infinite alternate;
+    }
+    @keyframes bob { from { transform: scale(1); } to { transform: scale(1.06); } }
+    .kicker { font-size: 18px; text-transform: uppercase; letter-spacing: .2em; opacity: .75; }
+    h1 { font-size: clamp(36px, 6vw, 76px); line-height: 1.05; margin: 10px 0 8px; font-weight: 800; overflow-wrap: anywhere; }
+    .message {
+      font-size: clamp(20px, 2.4vw, 30px); margin: 18px auto 0; max-width: 760px;
+      padding: 14px 22px; border-radius: 16px; background: rgba(255, 255, 255, .09);
+      overflow-wrap: anywhere;
+    }
+    .when { opacity: .65; margin-top: 10px; font-size: 15px; }
+    .actions { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-top: 40px; }
+    button {
+      font: inherit; font-size: 20px; font-weight: 700; color: #fff; cursor: pointer;
+      padding: 16px 28px; border-radius: 16px; border: 2px solid rgba(255, 255, 255, .25);
+      background: rgba(255, 255, 255, .08); min-width: 150px;
+      transition: transform .08s, background .15s;
+    }
+    button:hover { background: rgba(255, 255, 255, .16); }
+    button:active { transform: scale(.97); }
+    button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+    button.primary { background: linear-gradient(135deg, var(--a), var(--b)); border-color: transparent; }
+    button.primary:hover { filter: brightness(1.08); }
+    button.quiet { min-width: 0; font-size: 16px; padding: 12px 20px; border-color: transparent; opacity: .8; }
+    kbd { font: 12px ui-monospace, monospace; opacity: .6; margin-left: 8px; padding: 1px 6px; border: 1px solid rgba(255,255,255,.3); border-radius: 5px; }
+    .queue { margin-top: 30px; font-size: 15px; opacity: .85; }
+    .queue span { display: inline-block; margin: 4px; padding: 4px 12px; border-radius: 999px; background: rgba(255,255,255,.1); }
+    @media (prefers-reduced-motion: reduce) {
+      body, .pulse .ring, .avatar { animation: none; }
+    }
+    @media (max-height: 640px) {
+      .pulse { width: 110px; height: 110px; margin-bottom: 20px; }
+      .avatar { font-size: 40px; }
+      .actions { margin-top: 24px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="stage">
+    <div class="pulse">
+      <div class="ring"></div><div class="ring"></div><div class="ring"></div>
+      <div class="avatar" id="avatar">?</div>
+    </div>
+    <div class="kicker">Someone is calling you</div>
+    <h1 id="title"></h1>
+    <div class="message" id="message" hidden></div>
+    <div class="when" id="when"></div>
+    <div class="actions">
+      <button class="primary" id="coming" type="button">🏃 Coming<kbd>Enter</kbd></button>
+      <button id="five" type="button">⏳ In 5 min<kbd>2</kbd></button>
+      <button id="busy" type="button">⛔ Busy<kbd>3</kbd></button>
+      <button class="quiet" id="dismiss" type="button">Dismiss<kbd>Esc</kbd></button>
+    </div>
+    <div class="queue" id="queue" hidden></div>
+  </div>
+  <script src="overlay.js"></script>
+</body>
+</html>

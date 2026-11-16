@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Poke the Colleague</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- ============ Onboarding ============ -->
+  <section id="onboard" class="onboard hidden">
+    <div class="logo"><span></span></div>
+    <h1>Poke the Colleague</h1>
+    <p>Get a full-screen alert and a ring in your headphones when a teammate calls you.</p>
+
+    <label for="ob-name">Your name (as colleagues know you)</label>
+    <input id="ob-name" type="text" maxlength="64" placeholder="e.g. Alex K." autocomplete="off" />
+
+    <div class="seg" role="tablist">
+      <button id="ob-tab-join" class="active" type="button">Join my team</button>
+      <button id="ob-tab-create" type="button">Create a team</button>
+    </div>
+
+    <div id="ob-join">
+      <label for="ob-invite">Invite link from a teammate</label>
+      <input id="ob-invite" type="text" class="mono" placeholder="https://poke-relay.example.workers.dev#ABCD-EFGH-…" autocomplete="off" />
+      <div class="hint">Ask whoever set up Poke for your team to copy their invite from Settings.</div>
+    </div>
+
+    <div id="ob-create" class="hidden">
+      <label for="ob-relay">Relay address</label>
+      <input id="ob-relay" type="text" class="mono" placeholder="poke-relay.your-team.workers.dev" autocomplete="off" />
+      <div class="hint">The free Cloudflare relay you deployed (see README → Deploy the relay).</div>
+      <label>New team code</label>
+      <div class="row">
+        <div id="ob-code" class="grow mono secret"></div>
+        <button id="ob-regen" type="button" class="ghost" title="Generate another">↻</button>
+      </div>
+      <div class="hint">After setup, share the invite from Settings with your colleagues.</div>
+    </div>
+
+    <details style="margin-top:14px">
+      <summary class="hint" style="cursor:pointer">Network options</summary>
+      <label for="ob-proxy">HTTP proxy</label>
+      <input id="ob-proxy" type="text" class="mono" placeholder="auto-detect (leave empty), none, or http://proxy:3128" autocomplete="off" />
+    </details>
+
+    <div id="ob-error" class="error hidden"></div>
+    <button id="ob-save" class="primary block" style="margin-top:18px" type="button">Start</button>
+  </section>
+
+  <!-- ============ Main app ============ -->
+  <section id="app" class="app hidden">
+    <header>
+      <div class="avatar" id="me-avatar">?</div>
+      <div class="me">
+        <div class="name" id="me-name"></div>
+        <div class="status"><span class="dot" id="conn-dot"></span><span id="conn-text"></span></div>
+      </div>
+      <label class="switch" title="Do not disturb: pokes are collected quietly instead of going full-screen">
+        <input type="checkbox" id="dnd" />
+        <span class="track"></span>
+        DND
+      </label>
+    </header>
+    <nav class="tabs">
+      <button data-tab="people" class="active">People</button>
+      <button data-tab="activity">Activity<span id="missed-badge" class="badge hidden"></span></button>
+      <button data-tab="settings">Settings</button>
+    </nav>
+
+    <main>
+      <!-- People -->
+      <div id="tab-people">
+        <div id="conn-banner" class="banner bad hidden">
+          <div class="grow" id="conn-banner-text"></div>
+          <button id="retry" type="button">Retry</button>
+        </div>
+        <div id="missed-banner" class="banner warn hidden">
+          <div class="grow" id="missed-text"></div>
+          <button id="missed-view" type="button" class="ghost">View</button>
+        </div>
+        <div class="composer">
+          <input id="search" type="search" placeholder="Find a colleague…" autocomplete="off" />
+          <input id="message" type="text" maxlength="280" placeholder="Message (optional) — e.g. “Got a minute?”" autocomplete="off" />
+        </div>
+        <div id="peers" class="list"></div>
+      </div>
+
+      <!-- Activity -->
+      <div id="tab-activity" class="hidden">
+        <div class="section-title">Pokes you received</div>
+        <div id="history"></div>
+        <div class="section-title">Pokes you sent</div>
+        <div id="sent"></div>
+      </div>
+
+      <!-- Settings -->
+      <div id="tab-settings" class="hidden">
+        <div class="card">
+          <h3>Invite colleagues</h3>
+          <div class="hint">Send them this invite. Anyone with it can join your team, so share it privately.</div>
+          <div class="row" style="margin-top:8px">
+            <div id="invite" class="grow mono secret"></div>
+            <button id="copy-invite" type="button">Copy</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Alerts</h3>
+          <div class="row" style="margin-top:12px">
+            <div class="grow">Ring sound in headphones</div>
+            <label class="switch green"><input type="checkbox" id="pref-sound" /><span class="track"></span></label>
+          </div>
+          <label for="pref-volume">Volume</label>
+          <input id="pref-volume" type="range" min="0" max="100" step="5" style="width:100%" />
+          <label for="pref-timeout">Close the alert and tell the caller “missed” after</label>
+          <select id="pref-timeout">
+            <option value="30">30 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+            <option value="300">5 minutes</option>
+          </select>
+          <div class="row" style="margin-top:14px">
+            <div class="grow">Start when I log in</div>
+            <label class="switch green"><input type="checkbox" id="pref-autostart" /><span class="track"></span></label>
+          </div>
+          <button id="test-alert" type="button" class="block" style="margin-top:14px">Show a test alert</button>
+        </div>
+
+        <div class="card">
+          <h3>Account &amp; connection</h3>
+          <label for="set-name">Your name</label>
+          <input id="set-name" type="text" maxlength="64" autocomplete="off" />
+          <label for="set-relay">Relay address</label>
+          <input id="set-relay" type="text" class="mono" autocomplete="off" />
+          <label for="set-code">Team code</label>
+          <input id="set-code" type="text" class="mono" autocomplete="off" />
+          <label for="set-proxy">HTTP proxy</label>
+          <input id="set-proxy" type="text" class="mono" placeholder="auto-detect (leave empty), none, or http://proxy:3128" autocomplete="off" />
+          <div id="set-error" class="error hidden"></div>
+          <button id="set-save" type="button" class="primary block" style="margin-top:14px">Save &amp; reconnect</button>
+          <div class="hint" style="margin-top:12px">Team ID (for the relay's ALLOWED_TEAMS list): <span id="team-id" class="mono secret"></span></div>
+        </div>
+
+        <div class="row">
+          <div class="grow hint">Poke the Colleague v<span id="version"></span></div>
+          <button id="quit" type="button" class="danger">Quit</button>
+        </div>
+      </div>
+    </main>
+  </section>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
