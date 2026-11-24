@@ -17,6 +17,8 @@ pub const MAX_NAME_CHARS: usize = 64;
 /// Nobody can be poked twice within this window (enforced by app *and* relay).
 pub const POKE_COOLDOWN_SECS: u64 = 60;
 pub const MAX_MESSAGE_CHARS: usize = 280;
+/// Custom reply wording ("Coming after this call").
+pub const MAX_REPLY_CHARS: usize = 60;
 
 // ---------- Frames ----------
 
@@ -130,6 +132,10 @@ pub enum ReplyKind {
 pub struct ReplyBody {
     pub kind: ReplyKind,
     pub ts: u64,
+    /// The receiver's own wording for the answer; `kind` says what it means
+    /// (on the way / later / busy). Older clients ignore it and show `kind`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 // ---------- AAD contexts (bind ciphertext to its routing metadata) ----------
@@ -170,8 +176,11 @@ mod tests {
         let p: ServerMsg = serde_json::from_str(r#"{"t":"poke","from":"a","pid":"p","body":"b"}"#).unwrap();
         assert!(matches!(p, ServerMsg::Poke { all: false, .. }));
 
-        let r = ReplyBody { kind: ReplyKind::FiveMin, ts: 1 };
+        let r = ReplyBody { kind: ReplyKind::FiveMin, ts: 1, text: None };
         assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"kind":"five_min","ts":1}"#);
+
+        let r = ReplyBody { kind: ReplyKind::Busy, ts: 1, text: Some("After lunch".into()) };
+        assert_eq!(serde_json::to_string(&r).unwrap(), r#"{"kind":"busy","ts":1,"text":"After lunch"}"#);
     }
 
     #[test]
@@ -182,5 +191,8 @@ mod tests {
         // ...and unknown future reply kinds don't break parsing.
         let r: ReplyBody = serde_json::from_str(r#"{"kind":"teleported","ts":1}"#).unwrap();
         assert_eq!(r.kind, ReplyKind::Other);
+        // 0.2.0 replies have no text.
+        let r: ReplyBody = serde_json::from_str(r#"{"kind":"coming","ts":1}"#).unwrap();
+        assert_eq!(r.text, None);
     }
 }

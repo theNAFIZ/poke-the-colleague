@@ -6,8 +6,9 @@
 //!
 //! * Lock — Windows: WTS session flags. Linux: logind `LockedHint` (GNOME, KDE, …),
 //!   falling back to the freedesktop/GNOME ScreenSaver `GetActive`.
-//! * Mic  — Windows: the per-user CapabilityAccessManager "microphone in use"
-//!   records (same source as the taskbar mic icon). Linux: PipeWire capture
+//! * Mic  — Windows: active WASAPI capture sessions on every microphone, with
+//!   the CapabilityAccessManager "microphone in use" registry records as a
+//!   fallback. Linux: PipeWire capture
 //!   streams via `pw-dump`, falling back to `pactl` on PulseAudio systems.
 
 use std::time::Duration;
@@ -294,42 +295,163 @@ mod mic {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
 
-    const ROOT: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
-    /// An app that crashed can leave a stale "in use" record; ignore very old ones.
-    const STALE_SECS: u64 = 12 * 3600;
+    /// Capture sessions that are not calls (level meters, audio tools).
+    const IGNORE: &[&str] = &["poke-the-colleague", "audiodg", "sndvol", "nvidia broadcast", "realtek"];
 
     pub fn active_app() -> Option<String> {
-        let root = RegKey::predef(HKEY_CURRENT_USER).open_subkey(ROOT).ok()?;
-        for name in root.enum_keys().flatten() {
-            let Ok(key) = root.open_subkey(&name) else { continue };
-            if name == "NonPackaged" {
-                // Desktop apps, keyed by exe path with '\' replaced by '#'.
-                for exe in key.enum_keys().flatten() {
-                    if let Ok(sub) = key.open_subkey(&exe) {
-                        if in_use(&sub) && !exe.to_lowercase().contains("poke-the-colleague") {
-                            let file = exe.rsplit('#').next().unwrap_or(&exe);
-                            return Some(file.trim_end_matches(".exe").trim_end_matches(".EXE").to_string());
-                        }
-                    }
-                }
-            } else if in_use(&key) {
-                // Store apps (e.g. new Teams: MSTeams_8wekyb3d8bbwe).
-                return Some(name.split('_').next().unwrap_or(&name).to_string());
-            }
-        }
-        None
+        // WASAPI sees every app that is recording right now. The registry
+        // records are kept as a fallback: they are what the taskbar mic icon
+        // used on older builds, but newer Windows 11 versions stopped updating
+        // them reliably.
+        wasapi::active_app().or_else(registry::active_app)
     }
 
-    fn in_use(key: &RegKey) -> bool {
-        let start: u64 = key.get_value("LastUsedTimeStart").unwrap_or(0);
-        let stop: u64 = key.get_value("LastUsedTimeStop").unwrap_or(1);
-        if start == 0 || stop != 0 {
-            return false;
+    fn ignored(name: &str) -> bool {
+        let n = name.to_lowercase();
+        IGNORE.iter().any(|i| n.contains(i))
+    }
+
+    /// `C:\…\ms-teams.exe` → `Teams`, other apps → file name without `.exe`.
+    fn pretty(exe: &str) -> String {
+        let file = exe.rsplit(['\\', '/', '#']).next().unwrap_or(exe);
+        let stem = file.strip_suffix(".exe").or_else(|| file.strip_suffix(".EXE")).unwrap_or(file);
+        match stem.to_lowercase().as_str() {
+            "ms-teams" | "msteams" | "teams" => "Teams".into(),
+            "zoom" => "Zoom".into(),
+            "slack" => "Slack".into(),
+            "chrome" => "Chrome".into(),
+            "msedge" => "Edge".into(),
+            "msedgewebview2" => "a web app".into(),
+            "firefox" => "Firefox".into(),
+            "webex" | "ciscocollabhost" | "webexmta" => "Webex".into(),
+            "discord" => "Discord".into(),
+            "skype" => "Skype".into(),
+            _ => stem.to_string(),
         }
-        // FILETIME: 100 ns ticks since 1601-01-01.
-        let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let start_unix = (start / 10_000_000).saturating_sub(11_644_473_600);
-        now_unix.saturating_sub(start_unix) < STALE_SECS
+    }
+
+    /// Active capture sessions on every enabled microphone.
+    mod wasapi {
+        use std::cell::Cell;
+
+        use windows::core::{Interface, PWSTR};
+        use windows::Win32::Foundation::{CloseHandle, S_OK};
+        use windows::Win32::Media::Audio::{
+            eCapture, AudioSessionStateActive, IAudioSessionControl2, IAudioSessionManager2, IMMDeviceEnumerator,
+            MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
+        };
+        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        thread_local!(static COM: Cell<bool> = const { Cell::new(false) });
+
+        pub fn active_app() -> Option<String> {
+            COM.with(|c| {
+                if !c.get() {
+                    // SAFETY: initialises COM for this (watcher) thread once; it lives
+                    // as long as the app, so it is never uninitialised.
+                    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+                    c.set(true);
+                }
+            });
+            match unsafe { scan() } {
+                Ok(found) => found,
+                Err(e) => {
+                    tracing::debug!("WASAPI session scan failed: {e}");
+                    None
+                }
+            }
+        }
+
+        /// SAFETY: plain COM calls on interfaces we own; COM is initialised above.
+        unsafe fn scan() -> windows::core::Result<Option<String>> {
+            let own = std::process::id();
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
+            let devices = enumerator.EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE)?;
+            for d in 0..devices.GetCount()? {
+                let Ok(device) = devices.Item(d) else { continue };
+                let Ok(manager) = device.Activate::<IAudioSessionManager2>(CLSCTX_ALL, None) else { continue };
+                let Ok(sessions) = manager.GetSessionEnumerator() else { continue };
+                for s in 0..sessions.GetCount()? {
+                    let Ok(control) = sessions.GetSession(s) else { continue };
+                    if control.GetState().ok() != Some(AudioSessionStateActive) {
+                        continue;
+                    }
+                    let Ok(control) = control.cast::<IAudioSessionControl2>() else { continue };
+                    if control.IsSystemSoundsSession() == S_OK {
+                        continue;
+                    }
+                    let pid = control.GetProcessId().unwrap_or(0);
+                    if pid == own {
+                        continue;
+                    }
+                    let exe = if pid == 0 { None } else { process_path(pid) };
+                    if exe.as_deref().is_some_and(super::ignored) {
+                        continue;
+                    }
+                    let name = exe.as_deref().map(super::pretty).unwrap_or_else(|| "an app".into());
+                    tracing::debug!("microphone in use by {name} (pid {pid})");
+                    return Ok(Some(name));
+                }
+            }
+            Ok(None)
+        }
+
+        fn process_path(pid: u32) -> Option<String> {
+            // SAFETY: the handle is only used for the query below and closed right after.
+            unsafe {
+                let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+                let mut buf = [0u16; 1024];
+                let mut len = buf.len() as u32;
+                let ok = QueryFullProcessImageNameW(h, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len).is_ok();
+                let _ = CloseHandle(h);
+                ok.then(|| String::from_utf16_lossy(&buf[..len as usize]))
+            }
+        }
+    }
+
+    /// The per-user CapabilityAccessManager "microphone in use" records.
+    mod registry {
+        use super::*;
+
+        const ROOT: &str = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone";
+        /// An app that crashed can leave a stale "in use" record; ignore very old ones.
+        const STALE_SECS: u64 = 12 * 3600;
+
+        pub fn active_app() -> Option<String> {
+            let root = RegKey::predef(HKEY_CURRENT_USER).open_subkey(ROOT).ok()?;
+            for name in root.enum_keys().flatten() {
+                let Ok(key) = root.open_subkey(&name) else { continue };
+                if name == "NonPackaged" {
+                    // Desktop apps, keyed by exe path with '\' replaced by '#'.
+                    for exe in key.enum_keys().flatten() {
+                        if let Ok(sub) = key.open_subkey(&exe) {
+                            if in_use(&sub) && !ignored(&exe) {
+                                return Some(pretty(&exe));
+                            }
+                        }
+                    }
+                } else if in_use(&key) {
+                    // Store apps (e.g. new Teams: MSTeams_8wekyb3d8bbwe).
+                    return Some(pretty(name.split('_').next().unwrap_or(&name)));
+                }
+            }
+            None
+        }
+
+        fn in_use(key: &RegKey) -> bool {
+            let start: u64 = key.get_value("LastUsedTimeStart").unwrap_or(0);
+            let stop: u64 = key.get_value("LastUsedTimeStop").unwrap_or(1);
+            if start == 0 || stop != 0 {
+                return false;
+            }
+            // FILETIME: 100 ns ticks since 1601-01-01.
+            let now_unix = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            let start_unix = (start / 10_000_000).saturating_sub(11_644_473_600);
+            now_unix.saturating_sub(start_unix) < STALE_SECS
+        }
     }
 }
 

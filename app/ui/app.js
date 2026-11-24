@@ -71,6 +71,21 @@ const OUTCOME = {
 // says "In a call" / "Away".
 const ROW_STATUS = { in_call: ["Notified quietly", "warn"], locked: ["Sees it later", "warn"] };
 
+// A colleague's custom answer ("After lunch") is shown in their own words,
+// coloured by what it means (on the way / later / busy).
+function statusOf(o) {
+  const [label, cls] = STATUS[o.status] || [o.status, ""];
+  return o.reply_text ? [`“${o.reply_text}”`, cls] : [label, cls];
+}
+
+const REPLY_MEANS = [
+  ["coming", "On my way"],
+  ["five_min", "Later"],
+  ["busy", "Busy"],
+];
+const MAX_REPLIES = 6;
+const MAX_QUICK = 8;
+
 function secsLeft(untilMs) {
   return Math.max(0, Math.ceil((untilMs - Date.now()) / 1000));
 }
@@ -130,6 +145,7 @@ function render() {
   badge.classList.toggle("hidden", snap.missed === 0);
 
   renderUpdate();
+  renderQuick();
   renderPeers();
   renderPokeAll();
   renderActivity();
@@ -182,6 +198,16 @@ function renderPokeAll() {
   if (btn.disabled) $("poke-all-confirm").classList.add("hidden");
 }
 
+let quickKey = "";
+function renderQuick() {
+  const key = JSON.stringify(snap.quick_messages);
+  if (key === quickKey) return;
+  quickKey = key;
+  $("quick").innerHTML = snap.quick_messages
+    .map((m) => `<button type="button" class="chip-btn" data-msg="${esc(m)}">${esc(m)}</button>`)
+    .join("");
+}
+
 function latestOutgoing(peerId) {
   return snap.outgoing.find((o) => o.to === peerId);
 }
@@ -208,7 +234,7 @@ function renderPeers() {
     .map((p) => {
       const out = latestOutgoing(p.id);
       const fresh = out && Date.now() - out.sent_at < 10 * 60 * 1000;
-      const [label, cls] = fresh ? ROW_STATUS[out.status] || STATUS[out.status] || [out.status, ""] : [];
+      const [label, cls] = fresh ? (!out.reply_text && ROW_STATUS[out.status]) || statusOf(out) : [];
       const wait = secsLeft(snap.cooldowns[p.id] || 0);
       const sub = [
         p.locked ? `<span class="chip">Away 🔒</span>` : "",
@@ -241,7 +267,7 @@ function renderActivity() {
           const canPokeBack = e.unread && online.has(e.from);
           const wait = secsLeft(snap.cooldowns[e.from] || 0);
           return `<div class="event ${e.unread ? "unread" : ""}">
-          <div class="what"><b>${esc(e.from_name)}</b>${e.all ? " → everyone" : ""} · ${esc(OUTCOME[e.outcome] || e.outcome)}
+          <div class="what"><b>${esc(e.from_name)}</b>${e.all ? " → everyone" : ""} · ${esc(e.reply_text ? `You answered: “${e.reply_text}”` : OUTCOME[e.outcome] || e.outcome)}
             ${e.message ? `<div class="msg">“${esc(e.message)}”</div>` : ""}
             ${canPokeBack ? `<div class="actions"><button type="button" data-poke="${esc(e.from)}" ${wait ? "disabled" : ""}>👋 Poke back${wait ? ` (${wait}s)` : ""}</button></div>` : ""}</div>
           <div class="when">${esc(ago(e.at))}</div></div>`;
@@ -271,16 +297,19 @@ function renderActivity() {
           let who, chips;
           if (o.all) {
             who = `Everyone (${g.length})`;
-            const counts = {};
-            for (const x of g) counts[x.status] = (counts[x.status] || 0) + 1;
-            chips = Object.entries(counts)
-              .map(([st, n]) => {
-                const [label, cls] = STATUS[st] || [st, ""];
-                return `<span class="chip ${cls}" title="${esc(g.filter((x) => x.status === st).map((x) => x.to_name).join(", "))}">${n} × ${esc(label)}</span>`;
-              })
+            // Group by what is shown, so different custom answers stay apart.
+            const buckets = new Map();
+            for (const x of g) {
+              const [label, cls] = statusOf(x);
+              const k = `${cls}|${label}`;
+              if (!buckets.has(k)) buckets.set(k, { label, cls, names: [] });
+              buckets.get(k).names.push(x.to_name);
+            }
+            chips = [...buckets.values()]
+              .map((b) => `<span class="chip ${b.cls}" title="${esc(b.names.join(", "))}">${b.names.length} × ${esc(b.label)}</span>`)
               .join(" ");
           } else {
-            const [label, cls] = STATUS[o.status] || [o.status, ""];
+            const [label, cls] = statusOf(o);
             who = o.to_name;
             chips = `<span class="chip ${cls}">${esc(label)}</span>`;
           }
@@ -315,6 +344,8 @@ function fillSettings() {
     sel.add(new Option(`${snap.alert_timeout_secs} seconds`, snap.alert_timeout_secs));
   }
   sel.value = String(snap.alert_timeout_secs);
+  fillReplies(snap.replies);
+  fillQuick(snap.quick_messages);
   showError($("set-error"), "");
   renderSettingsStatic();
 }
@@ -386,6 +417,79 @@ async function savePrefs() {
   } catch (e) {
     toast(String(e));
   }
+}
+
+// ------------------------------------------------------------------ alert answers & quick messages
+
+function replyRow(r = { label: "", kind: "coming" }) {
+  const row = document.createElement("div");
+  row.className = "edit-row";
+  row.innerHTML = `<input type="text" maxlength="60" placeholder="e.g. 🍵 After my tea" autocomplete="off" />
+    <select>${REPLY_MEANS.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>
+    <button type="button" class="ghost remove" title="Remove">✕</button>`;
+  row.querySelector("input").value = r.label;
+  row.querySelector("select").value = r.kind;
+  return row;
+}
+
+function quickRow(m = "") {
+  const row = document.createElement("div");
+  row.className = "edit-row";
+  row.innerHTML = `<input type="text" maxlength="280" placeholder="e.g. Coffee? ☕" autocomplete="off" />
+    <button type="button" class="ghost remove" title="Remove">✕</button>`;
+  row.querySelector("input").value = m;
+  return row;
+}
+
+function fillReplies(list) {
+  $("replies-edit").replaceChildren(...list.map(replyRow));
+  updateEditButtons();
+}
+
+function fillQuick(list) {
+  $("quick-edit").replaceChildren(...list.map((m) => quickRow(m)));
+  updateEditButtons();
+}
+
+function updateEditButtons() {
+  const replies = $("replies-edit").children;
+  $("reply-add").disabled = replies.length >= MAX_REPLIES;
+  // At least one answer button must stay.
+  for (const b of $("replies-edit").querySelectorAll(".remove")) b.disabled = replies.length <= 1;
+  $("quick-add").disabled = $("quick-edit").children.length >= MAX_QUICK;
+}
+
+async function saveReplies() {
+  const replies = [...$("replies-edit").children]
+    .map((row) => ({ label: row.querySelector("input").value.trim(), kind: row.querySelector("select").value }))
+    .filter((r) => r.label);
+  if (!replies.length) return; // keep the last saved list until something is typed
+  try {
+    await invoke("set_replies", { replies });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+async function saveQuick() {
+  const messages = [...$("quick-edit").querySelectorAll("input")].map((i) => i.value.trim()).filter(Boolean);
+  try {
+    await invoke("set_quick_messages", { messages });
+  } catch (e) {
+    toast(String(e));
+  }
+}
+
+function wireEditList(listId, save) {
+  const list = $(listId);
+  list.addEventListener("change", save);
+  list.addEventListener("click", (e) => {
+    const btn = e.target.closest("button.remove");
+    if (!btn || btn.disabled) return;
+    btn.closest(".edit-row").remove();
+    updateEditButtons();
+    save();
+  });
 }
 
 // ------------------------------------------------------------------ onboarding
@@ -477,6 +581,29 @@ function wire() {
   $("check-update").addEventListener("click", checkUpdate);
   for (const id of ["pref-sound", "pref-timeout", "pref-autostart", "pref-calls"]) $(id).addEventListener("change", savePrefs);
   $("pref-volume").addEventListener("change", savePrefs);
+
+  wireEditList("replies-edit", saveReplies);
+  wireEditList("quick-edit", saveQuick);
+  $("reply-add").addEventListener("click", () => {
+    const row = replyRow();
+    $("replies-edit").append(row);
+    updateEditButtons();
+    row.querySelector("input").focus();
+  });
+  $("quick-add").addEventListener("click", () => {
+    const row = quickRow();
+    $("quick-edit").append(row);
+    updateEditButtons();
+    row.querySelector("input").focus();
+  });
+  $("reply-reset").addEventListener("click", () => {
+    fillReplies(snap.default_replies);
+    saveReplies();
+  });
+  $("quick-reset").addEventListener("click", () => {
+    fillQuick(snap.default_quick_messages);
+    saveQuick();
+  });
 
   $("set-save").addEventListener("click", async () => {
     showError($("set-error"), "");

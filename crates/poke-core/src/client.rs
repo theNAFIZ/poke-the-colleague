@@ -66,7 +66,8 @@ pub enum Event {
     Peers { peers: Vec<Peer> },
     /// `all` = this was a "poke everyone".
     Poke { from: String, from_name: String, pid: String, message: Option<String>, ts: u64, all: bool },
-    Reply { from: String, from_name: String, pid: String, kind: ReplyKind },
+    /// `text` = the receiver's own wording for the answer, if they customised it.
+    Reply { from: String, from_name: String, pid: String, kind: ReplyKind, text: Option<String> },
     /// For a poke-all there is one `Ack` per recipient; `to == "*"` means
     /// the poke-all reached nobody (or could not be sent at all).
     Ack { pid: String, to: String, status: AckStatus },
@@ -75,7 +76,7 @@ pub enum Event {
 enum Cmd {
     Poke { to: String, pid: String, message: Option<String> },
     PokeAll { pid: String, message: Option<String> },
-    Reply { to: String, pid: String, kind: ReplyKind },
+    Reply { to: String, pid: String, kind: ReplyKind, text: Option<String> },
     Profile(Profile),
     ReconnectNow,
     Shutdown,
@@ -146,7 +147,13 @@ impl Client {
     }
 
     pub fn reply(&self, to: &str, pid: &str, kind: ReplyKind) {
-        let _ = self.tx.send(Cmd::Reply { to: to.into(), pid: pid.into(), kind });
+        self.reply_with_text(to, pid, kind, None);
+    }
+
+    /// Reply with the user's own wording; `kind` tells older clients what it means.
+    pub fn reply_with_text(&self, to: &str, pid: &str, kind: ReplyKind, text: Option<&str>) {
+        let text = text.map(|t| truncate_chars(t, MAX_REPLY_CHARS)).filter(|t| !t.is_empty());
+        let _ = self.tx.send(Cmd::Reply { to: to.into(), pid: pid.into(), kind, text });
     }
 
     pub fn set_profile(&self, profile: Profile) {
@@ -352,8 +359,8 @@ impl Runner {
                             let body = self.keys.seal(&aad, &serde_json::to_vec(&body).expect("serializable"));
                             ClientMsg::PokeAll { pid, body }
                         }
-                        Some(Cmd::Reply { to, pid, kind }) => {
-                            let body = ReplyBody { kind, ts: now_secs() };
+                        Some(Cmd::Reply { to, pid, kind, text }) => {
+                            let body = ReplyBody { kind, ts: now_secs(), text };
                             let aad = aad_reply(&self.client_id, &to, &pid);
                             let body = self.keys.seal(&aad, &serde_json::to_vec(&body).expect("serializable"));
                             ClientMsg::Reply { to, pid, body }
@@ -463,7 +470,10 @@ impl Runner {
                 let aad = aad_reply(&from, &self.client_id, &pid);
                 let parsed = self.keys.open(&aad, &body).ok().and_then(|b| serde_json::from_slice::<ReplyBody>(&b).ok());
                 match parsed {
-                    Some(rb) => self.emit(Event::Reply { from_name: name_of(peers, &from), from, pid, kind: rb.kind }),
+                    Some(rb) => {
+                        let text = rb.text.map(|t| truncate_chars(&t, MAX_REPLY_CHARS)).filter(|t| !t.is_empty());
+                        self.emit(Event::Reply { from_name: name_of(peers, &from), from, pid, kind: rb.kind, text })
+                    }
                     None => warn!("dropping undecryptable reply from {from}"),
                 }
             }

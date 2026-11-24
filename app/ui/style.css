@@ -146,6 +146,14 @@ nav.tabs .badge { background: var(--accent); color: #fff; border-radius: 999px; 
 .quick { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip-btn { padding: 4px 10px; font-size: 12px; font-weight: 600; border-radius: 999px; background: var(--surface-2); border-color: transparent; }
 .chip-btn:hover { background: var(--border); }
+.quick:empty { display: none; }
+
+/* editable lists in Settings */
+.edit-list { display: grid; gap: 6px; margin-top: 10px; }
+.edit-row { display: flex; gap: 6px; align-items: center; }
+.edit-row input { flex: 1; min-width: 0; }
+.edit-row select { width: auto; flex: none; }
+.edit-row .remove { padding: 6px 9px; color: var(--muted); }
 .peer button.primary:disabled { background: var(--surface-2); color: var(--muted); filter: none; }
 .event.unread { background: color-mix(in srgb, var(--warn) 12%, transparent); border-radius: 8px; padding-left: 8px; padding-right: 8px; }
 .event .actions { margin-top: 6px; }

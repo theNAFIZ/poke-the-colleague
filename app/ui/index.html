@@ -90,11 +90,7 @@
         <div class="composer">
           <input id="search" type="search" placeholder="Find a colleague…" autocomplete="off" />
           <input id="message" type="text" maxlength="280" placeholder="Message (optional) — e.g. “Got a minute?”" autocomplete="off" />
-          <div class="quick" id="quick">
-            <button type="button" class="chip-btn" data-msg="Join the meeting 📅">📅 Join the meeting</button>
-            <button type="button" class="chip-btn" data-msg="Lunch time 🍽️">🍽️ Lunch time</button>
-            <button type="button" class="chip-btn" data-msg="Nasta time 🥟">🥟 Nasta</button>
-          </div>
+          <div class="quick" id="quick"></div>
           <button id="poke-all" type="button" class="block">📣 Poke everyone</button>
           <div id="poke-all-confirm" class="banner info hidden">
             <div class="grow" id="poke-all-text"></div>
@@ -153,6 +149,28 @@
             <label class="switch green"><input type="checkbox" id="pref-calls" /><span class="track"></span></label>
           </div>
           <button id="test-alert" type="button" class="block" style="margin-top:14px">Show a test alert</button>
+        </div>
+
+        <div class="card">
+          <h3>Alert answers</h3>
+          <div class="hint">The buttons on your full-screen alert. The first one is also <b>Enter</b>, the next ones 2, 3, … The caller sees your wording; the dropdown says what it means for them.</div>
+          <div id="replies-edit" class="edit-list"></div>
+          <div class="row" style="margin-top:8px">
+            <button id="reply-add" type="button" class="ghost">+ Add answer</button>
+            <div class="grow"></div>
+            <button id="reply-reset" type="button" class="ghost">Reset to defaults</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Quick messages</h3>
+          <div class="hint">One-click messages above your colleague list.</div>
+          <div id="quick-edit" class="edit-list"></div>
+          <div class="row" style="margin-top:8px">
+            <button id="quick-add" type="button" class="ghost">+ Add message</button>
+            <div class="grow"></div>
+            <button id="quick-reset" type="button" class="ghost">Reset to defaults</button>
+          </div>
         </div>
 
         <div class="card">

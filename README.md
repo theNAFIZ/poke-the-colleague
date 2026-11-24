@@ -1,6 +1,6 @@
 # Poke the Colleague
 
-Colleagues wearing headphones don't hear you calling their name. **Poke** fixes that: click their name and their screen shows a **full-screen alert** while a **ring plays through their headphones**. They answer with one click (*Coming* / *In 5 min* / *Busy*) and you see the answer.
+Colleagues wearing headphones don't hear you calling their name. **Poke** fixes that: click their name and their screen shows a **full-screen alert** while a **ring plays through their headphones**. They answer with one click (*Coming* / *In 5 min* / *Busy*, or their own wording) and you see the answer.
 
 - Runs on **Windows 10/11** and **Debian/Ubuntu** (X11 and GNOME on Wayland)
 - **No admin rights** needed to install on Windows (per-user installer)
@@ -93,7 +93,8 @@ The part after `#` is the **team code**. Anyone who has it can join the team, so
 - **Poke someone:** click **Poke** next to their name. You can add a short message first. Typing a name and pressing **Enter** also works.
 - **What the caller sees:** *Delivered → Alert showing 👀 → On the way 🏃 / In 5 min ⏳ / Busy ⛔*, or *No answer* if the alert times out. You also get *Offline* immediately if they aren't connected, which beats shouting.
 - **When you're poked:** a full-screen alert appears on every monitor and a ring plays in your headphones. Answer with **Enter** (Coming), **2** (5 min), **3** (Busy) or **Esc** (Dismiss).
-- **Poke everyone:** use **📣 Poke everyone** for things like "Join the meeting" or "Lunch time". The quick buttons fill in the message, and the app asks you to confirm before sending. Everyone online gets the alert, and Activity shows a single row summarising their answers.
+- **Your own answers:** under **Settings → Alert answers** you can rename, add (up to 6) or remove the answer buttons, e.g. *🍵 After my tea*. Each one says what it means for the caller (*on my way*, *later* or *busy*). The caller sees your wording, while colleagues on older versions see the meaning.
+- **Poke everyone:** use **📣 Poke everyone** for things like "Join the meeting" or "Lunch time". The quick buttons fill in the message (change them under **Settings → Quick messages**), and the app asks you to confirm before sending. Everyone online gets the alert, and Activity shows a single row summarising their answers.
 - **Once a minute per person:** after you poke someone, their button shows a countdown until you can poke them again. *Poke everyone* is also limited to once a minute, and it skips anyone you poked individually in the last minute. The relay enforces the same rule.
 - **In a call (automatic):** Poke treats "microphone in use" as being in a call. That covers Teams, Zoom, Meet in a browser, Slack huddles and so on.
   - Your colleagues see **In a call 📞** next to your name.

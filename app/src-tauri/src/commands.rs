@@ -7,6 +7,7 @@ use poke_core::ReplyKind;
 use serde::Serialize;
 use tauri::{AppHandle, State, WebviewWindow};
 
+use crate::settings::QuickReply;
 use crate::state::{Incoming, Shared, Snapshot};
 
 type St<'a> = State<'a, Shared>;
@@ -74,6 +75,22 @@ pub fn set_prefs(
 }
 
 #[tauri::command]
+pub fn set_replies(state: St, replies: Vec<QuickReply>) -> Result<(), String> {
+    state.set_replies(replies)
+}
+
+#[tauri::command]
+pub fn set_quick_messages(state: St, messages: Vec<String>) -> Result<(), String> {
+    state.set_quick_messages(messages)
+}
+
+/// Answer buttons for the full-screen alert.
+#[tauri::command]
+pub fn get_replies(state: St) -> Vec<QuickReply> {
+    state.replies()
+}
+
+#[tauri::command]
 pub fn clear_missed(state: St) {
     state.clear_missed();
 }
@@ -95,8 +112,8 @@ pub fn get_incoming(state: St) -> Vec<Incoming> {
 }
 
 #[tauri::command]
-pub async fn respond(state: St<'_>, pid: String, kind: ReplyKind) -> Result<(), String> {
-    state.respond(&pid, kind);
+pub async fn respond(state: St<'_>, pid: String, kind: ReplyKind, label: Option<String>) -> Result<(), String> {
+    state.respond(&pid, kind, label);
     Ok(())
 }
 

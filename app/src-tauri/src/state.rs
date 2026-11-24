@@ -29,7 +29,7 @@ use tauri_plugin_notification::NotificationExt as _;
 use tracing::{info, warn};
 
 use crate::overlay;
-use crate::settings::Settings;
+use crate::settings::{self, QuickReply, Settings};
 use crate::sound::Sound;
 
 /// Nobody can be poked twice within a minute (the relay enforces it too).
@@ -61,6 +61,8 @@ pub struct Outgoing {
     /// sending | delivered | offline | rate_limited | too_soon | not_connected |
     /// seen | dnd | in_call | locked | missed | coming | five_min | busy | dismissed
     pub status: String,
+    /// Their own wording for the answer (`status` says what it means).
+    pub reply_text: Option<String>,
     pub all: bool,
 }
 
@@ -73,6 +75,8 @@ pub struct HistoryItem {
     pub at: u64,
     /// coming | five_min | busy | dismissed | missed | dnd | in_call | locked
     pub outcome: String,
+    /// The custom answer we gave, if any.
+    pub reply_text: Option<String>,
     pub all: bool,
     /// Not acknowledged yet (shown highlighted, counted as "missed").
     pub unread: bool,
@@ -91,6 +95,11 @@ pub struct Snapshot {
     pub volume: f32,
     pub alert_timeout_secs: u32,
     pub detect_calls: bool,
+    pub replies: Vec<QuickReply>,
+    pub quick_messages: Vec<String>,
+    /// For "Reset to defaults" in Settings.
+    pub default_replies: Vec<QuickReply>,
+    pub default_quick_messages: Vec<String>,
     pub autostart: bool,
     pub team_id: Option<String>,
     pub invite: Option<String>,
@@ -289,6 +298,10 @@ impl AppState {
             volume: s.volume,
             alert_timeout_secs: s.alert_timeout_secs,
             detect_calls: s.detect_calls,
+            replies: s.replies.clone(),
+            quick_messages: s.quick_messages.clone(),
+            default_replies: QuickReply::defaults(),
+            default_quick_messages: settings::default_quick_messages(),
             autostart: self.handle.autolaunch().is_enabled().unwrap_or(false),
             team_id: g.team_id.clone(),
             invite,
@@ -498,6 +511,30 @@ impl AppState {
         Ok(())
     }
 
+    pub fn replies(&self) -> Vec<QuickReply> {
+        self.lock().settings.replies.clone()
+    }
+
+    pub fn set_replies(&self, replies: Vec<QuickReply>) -> Result<(), String> {
+        {
+            let mut g = self.lock();
+            g.settings.replies = settings::clean_replies(replies);
+            g.settings.save(&self.config_dir).map_err(|e| e.to_string())?;
+        }
+        self.publish();
+        Ok(())
+    }
+
+    pub fn set_quick_messages(&self, messages: Vec<String>) -> Result<(), String> {
+        {
+            let mut g = self.lock();
+            g.settings.quick_messages = settings::clean_quick_messages(messages);
+            g.settings.save(&self.config_dir).map_err(|e| e.to_string())?;
+        }
+        self.publish();
+        Ok(())
+    }
+
     pub fn set_dnd(&self, dnd: bool) {
         let mut g = self.lock();
         if g.settings.dnd == dnd {
@@ -556,7 +593,7 @@ impl AppState {
                     c.reply(&item.from, &item.pid, ReplyKind::Locked);
                 }
                 g.away.push(item.pid.clone());
-                push_history(&mut g, &item, "locked", true);
+                push_history(&mut g, &item, "locked", None, true);
             }
             hid_alerts = true;
         }
@@ -624,6 +661,7 @@ impl AppState {
             message,
             sent_at: now_ms(),
             status: "sending".into(),
+            reply_text: None,
             all: false,
         });
         g.outgoing.truncate(MAX_OUTGOING);
@@ -659,6 +697,7 @@ impl AppState {
                 message: message.clone(),
                 sent_at,
                 status: status.into(),
+                reply_text: None,
                 all: true,
             });
         }
@@ -670,15 +709,20 @@ impl AppState {
 
     // ---------------------------------------------------------------- incoming
 
-    /// Answer an incoming poke from the overlay.
-    pub fn respond(&self, pid: &str, kind: ReplyKind) {
+    /// Answer an incoming poke from the overlay. `label` = the button's text;
+    /// it is sent along unless it is one of the built-in buttons.
+    pub fn respond(&self, pid: &str, kind: ReplyKind, label: Option<String>) {
+        let text = label
+            .map(|l| poke_core::protocol::truncate_chars(&l, poke_core::protocol::MAX_REPLY_CHARS))
+            .filter(|l| !l.is_empty() && QuickReply::kind_allowed(kind))
+            .filter(|l| !QuickReply { label: l.clone(), kind }.is_default());
         let mut g = self.lock();
         let Some(idx) = g.incoming.iter().position(|i| i.pid == pid) else { return };
         let item = g.incoming.remove(idx);
         if let (Some(c), false) = (&g.client, item.is_test()) {
-            c.reply(&item.from, &item.pid, kind);
+            c.reply_with_text(&item.from, &item.pid, kind, text.as_deref());
         }
-        push_history(&mut g, &item, reply_str(kind), false);
+        push_history(&mut g, &item, reply_str(kind), text, false);
         let empty = g.incoming.is_empty();
         drop(g);
         self.after_incoming_change(empty);
@@ -687,7 +731,7 @@ impl AppState {
     pub fn respond_all(&self, kind: ReplyKind) {
         let pids: Vec<String> = self.lock().incoming.iter().map(|i| i.pid.clone()).collect();
         for pid in pids {
-            self.respond(&pid, kind);
+            self.respond(&pid, kind, None);
         }
     }
 
@@ -700,7 +744,7 @@ impl AppState {
                 c.reply(&item.from, &item.pid, ReplyKind::Missed);
             }
         }
-        push_history(&mut g, &item, "missed", true);
+        push_history(&mut g, &item, "missed", None, true);
         let empty = g.incoming.is_empty();
         drop(g);
         self.refresh_tray();
@@ -786,7 +830,7 @@ impl AppState {
                 drop(g);
                 self.publish();
             }
-            Event::Reply { pid, from, from_name, kind } => {
+            Event::Reply { pid, from, from_name, kind, text } => {
                 let mut g = self.lock();
                 let mut known = false;
                 let mut all = false;
@@ -796,11 +840,12 @@ impl AppState {
                     // "seen" must never overwrite a real answer that raced ahead of it.
                     if kind != ReplyKind::Seen || matches!(o.status.as_str(), "sending" | "delivered") {
                         o.status = reply_str(kind).into();
+                        o.reply_text = text.clone().filter(|_| QuickReply::kind_allowed(kind));
                     }
                 }
                 drop(g);
                 if known {
-                    self.notify_reply(&from_name, kind, all);
+                    self.notify_reply(&from_name, kind, text.as_deref(), all);
                     self.publish();
                 }
             }
@@ -835,7 +880,7 @@ impl AppState {
                 c.reply(&item.from, &item.pid, reply);
             }
             if let Some(outcome) = outcome {
-                push_history(&mut g, &item, outcome, true);
+                push_history(&mut g, &item, outcome, None, true);
                 if matches!(mode, Mode::Locked | Mode::InCall) {
                     g.away.push(item.pid.clone());
                 }
@@ -867,7 +912,8 @@ impl AppState {
         }
     }
 
-    fn notify_reply(&self, from_name: &str, kind: ReplyKind, all: bool) {
+    fn notify_reply(&self, from_name: &str, kind: ReplyKind, custom: Option<&str>, all: bool) {
+        let custom = custom.filter(|_| QuickReply::kind_allowed(kind)).map(|t| format!("answered “{t}”"));
         let text = match kind {
             ReplyKind::Seen | ReplyKind::Dismissed | ReplyKind::Other => return,
             // For "poke everyone" only real answers notify, to avoid a burst of toasts.
@@ -880,6 +926,7 @@ impl AppState {
             ReplyKind::InCall => "is in a call — they got a quiet notification 📞",
             ReplyKind::Locked => "is away (screen locked) — they'll see it when they're back 🔒",
         };
+        let text = custom.as_deref().unwrap_or(text);
         let main_focused = self
             .handle
             .get_webview_window("main")
@@ -897,7 +944,7 @@ impl Incoming {
     }
 }
 
-fn push_history(g: &mut Inner, item: &Incoming, outcome: &str, unread: bool) {
+fn push_history(g: &mut Inner, item: &Incoming, outcome: &str, reply_text: Option<String>, unread: bool) {
     if item.is_test() {
         return;
     }
@@ -908,6 +955,7 @@ fn push_history(g: &mut Inner, item: &Incoming, outcome: &str, unread: bool) {
         message: item.message.clone(),
         at: item.received_at,
         outcome: outcome.into(),
+        reply_text,
         all: item.all,
         unread,
     });

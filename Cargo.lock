@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "poke-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "poke-the-colleague"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "poke-core",
  "rodio",
@@ -3247,6 +3247,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "windows",
  "windows-sys 0.61.2",
  "winreg",
  "zbus 5.19.0",
