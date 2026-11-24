@@ -47,7 +47,7 @@ const STATUS = {
   five_min: ["In 5 min ⏳", "warn"],
   busy: ["Busy ⛔", "bad"],
   dismissed: ["Dismissed", ""],
-  dnd: ["Do not disturb 🔕", "warn"],
+  dnd: ["Do not disturb 🔕", "warn"], // answer from colleagues still on 0.2.x
   missed: ["No answer", "bad"],
   offline: ["Offline", "bad"],
   rate_limited: ["Slow down", "bad"],
@@ -114,19 +114,16 @@ function render() {
 
   $("me-name").textContent = snap.display_name;
   $("me-avatar").textContent = initials(snap.display_name);
-  $("dnd").checked = snap.dnd;
 
   const c = snap.conn;
   const dot = $("conn-dot");
-  const quiet = c.state === "online" && (snap.dnd || snap.in_call);
-  dot.className = "dot " + (quiet ? "dnd" : c.state);
+  const quiet = c.state === "online" && !!snap.in_call;
+  dot.className = "dot " + (quiet ? "quiet" : c.state);
   $("conn-text").textContent =
     c.state === "online"
-      ? snap.dnd
-        ? "Do not disturb"
-        : snap.in_call
-          ? `In a call (${snap.in_call}) · pokes arrive quietly`
-          : "Online"
+      ? snap.in_call
+        ? `In a call (${snap.in_call}) · pokes arrive quietly`
+        : "Online"
       : c.state === "connecting"
         ? "Connecting…"
         : "Offline";
@@ -239,6 +236,7 @@ function renderPeers() {
       const sub = [
         p.locked ? `<span class="chip">Away 🔒</span>` : "",
         p.in_call ? `<span class="chip warn">In a call 📞</span>` : "",
+        // Colleagues still on 0.2.x can be in do-not-disturb.
         p.presence === "dnd" ? `<span class="chip warn">Do not disturb</span>` : "",
         fresh ? `<span class="chip ${cls}">${esc(label)}</span><span>${esc(ago(out.sent_at))}</span>` : "",
       ].join("");
@@ -571,7 +569,6 @@ function wire() {
   $("search").addEventListener("keydown", enterPokes);
   $("message").addEventListener("keydown", enterPokes);
 
-  $("dnd").addEventListener("change", (e) => invoke("set_dnd", { dnd: e.target.checked }));
   $("retry").addEventListener("click", () => invoke("reconnect"));
   $("missed-view").addEventListener("click", () => setTab("activity"));
   $("copy-invite").addEventListener("click", copyInvite);

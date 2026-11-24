@@ -3208,7 +3208,7 @@ dependencies = [
 
 [[package]]
 name = "poke-core"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "base64 0.23.1",
  "chacha20poly1305",
@@ -3231,7 +3231,7 @@ dependencies = [
 
 [[package]]
 name = "poke-the-colleague"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "poke-core",
  "rodio",

@@ -58,11 +58,6 @@ pub fn poke_all(state: St, message: Option<String>) -> Result<usize, String> {
 }
 
 #[tauri::command]
-pub fn set_dnd(state: St, dnd: bool) {
-    state.set_dnd(dnd);
-}
-
-#[tauri::command]
 pub fn set_prefs(
     state: St,
     sound: bool,

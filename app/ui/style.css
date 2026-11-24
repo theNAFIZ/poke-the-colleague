@@ -93,7 +93,7 @@ header .me .name { font-weight: 700; white-space: nowrap; overflow: hidden; text
 .dot.online { background: var(--ok); }
 .dot.connecting { background: var(--warn); animation: blink 1s infinite; }
 .dot.offline { background: var(--bad); }
-.dot.dnd { background: var(--warn); }
+.dot.quiet { background: var(--warn); }
 @keyframes blink { 50% { opacity: 0.3; } }
 
 main { flex: 1; overflow-y: auto; padding: 12px 14px 16px; }

@@ -82,7 +82,6 @@ pub struct Settings {
     pub team_code: String,
     /// Empty = auto-detect, `none` = direct, or `http://host:port`.
     pub proxy: String,
-    pub dnd: bool,
     pub sound: bool,
     /// 0.0 ..= 1.0
     pub volume: f32,
@@ -104,7 +103,6 @@ impl Default for Settings {
             relay_url: String::new(),
             team_code: String::new(),
             proxy: String::new(),
-            dnd: false,
             sound: true,
             volume: 0.8,
             alert_timeout_secs: 60,

@@ -6,7 +6,6 @@
 //! | state          | alert                         | caller is told |
 //! |----------------|-------------------------------|----------------|
 //! | screen locked  | none, queued                  | `locked`       |
-//! | do-not-disturb | none, queued                  | `dnd`          |
 //! | in a call      | desktop notification + chime  | `in_call`      |
 //! | otherwise      | full-screen + ring            | `seen`, then the answer |
 //!
@@ -21,7 +20,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use poke_core::protocol::POKE_COOLDOWN_SECS;
 use poke_core::{AckStatus, Client, ClientConfig, ConnState, Event, Peer, Presence, Profile, ReplyKind};
 use serde::Serialize;
-use tauri::menu::CheckMenuItem;
 use tauri::tray::TrayIcon;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
@@ -90,7 +88,6 @@ pub struct Snapshot {
     pub relay_url: String,
     pub team_code: String,
     pub proxy: String,
-    pub dnd: bool,
     pub sound: bool,
     pub volume: f32,
     pub alert_timeout_secs: u32,
@@ -142,7 +139,6 @@ struct Inner {
     in_call: Option<String>,
     /// Pokes that arrived while locked / in a call, announced when back.
     away: Vec<String>,
-    dnd_item: Option<CheckMenuItem<Wry>>,
     tray: Option<TrayIcon<Wry>>,
     update: Option<(String, Option<String>)>,
     update_progress: Option<String>,
@@ -154,7 +150,7 @@ impl Inner {
     fn profile(&self) -> Profile {
         Profile {
             name: self.settings.display_name.clone(),
-            presence: if self.settings.dnd { Presence::Dnd } else { Presence::Available },
+            presence: Presence::Available,
             in_call: self.in_call.is_some(),
             locked: self.locked,
         }
@@ -243,7 +239,6 @@ impl AppState {
                 locked: false,
                 in_call: None,
                 away: vec![],
-                dnd_item: None,
                 tray: None,
                 update: None,
                 update_progress: None,
@@ -256,14 +251,8 @@ impl AppState {
         self.inner.lock().unwrap_or_else(|p| p.into_inner())
     }
 
-    pub fn attach_tray(&self, tray: TrayIcon<Wry>, dnd_item: CheckMenuItem<Wry>) {
-        let dnd = {
-            let mut g = self.lock();
-            g.tray = Some(tray);
-            g.dnd_item = Some(dnd_item.clone());
-            g.settings.dnd
-        };
-        let _ = dnd_item.set_checked(dnd);
+    pub fn attach_tray(&self, tray: TrayIcon<Wry>) {
+        self.lock().tray = Some(tray);
         self.refresh_tray();
     }
 
@@ -293,7 +282,6 @@ impl AppState {
             relay_url: s.relay_url.clone(),
             team_code: s.team_code.clone(),
             proxy: s.proxy.clone(),
-            dnd: s.dnd,
             sound: s.sound,
             volume: s.volume,
             alert_timeout_secs: s.alert_timeout_secs,
@@ -364,8 +352,6 @@ impl AppState {
         let g = self.lock();
         let status = if !g.settings.is_configured() {
             "not set up".to_string()
-        } else if g.settings.dnd {
-            "do not disturb".to_string()
         } else if g.in_call.is_some() {
             "in a call — pokes arrive quietly".to_string()
         } else {
@@ -533,30 +519,6 @@ impl AppState {
         }
         self.publish();
         Ok(())
-    }
-
-    pub fn set_dnd(&self, dnd: bool) {
-        let mut g = self.lock();
-        if g.settings.dnd == dnd {
-            return;
-        }
-        g.settings.dnd = dnd;
-        let _ = g.settings.save(&self.config_dir);
-        if let Some(c) = &g.client {
-            c.set_profile(g.profile());
-        }
-        let item = g.dnd_item.clone();
-        drop(g);
-        if let Some(item) = item {
-            let _ = item.set_checked(dnd);
-        }
-        self.refresh_tray();
-        self.publish();
-    }
-
-    pub fn toggle_dnd(&self) {
-        let dnd = self.lock().settings.dnd;
-        self.set_dnd(!dnd);
     }
 
     /// Mark every received poke as read.
@@ -856,15 +818,12 @@ impl AppState {
         enum Mode {
             Alert,
             Locked,
-            Dnd,
             InCall,
         }
         let (mode, volume, sound) = {
             let mut g = self.lock();
             let mode = if g.locked {
                 Mode::Locked
-            } else if g.settings.dnd {
-                Mode::Dnd
             } else if g.in_call.is_some() {
                 Mode::InCall
             } else {
@@ -873,7 +832,6 @@ impl AppState {
             let (reply, outcome) = match mode {
                 Mode::Alert => (ReplyKind::Seen, None),
                 Mode::Locked => (ReplyKind::Locked, Some("locked")),
-                Mode::Dnd => (ReplyKind::Dnd, Some("dnd")),
                 Mode::InCall => (ReplyKind::InCall, Some("in_call")),
             };
             if let Some(c) = &g.client {
@@ -905,7 +863,7 @@ impl AppState {
                 self.refresh_tray();
                 self.publish();
             }
-            Mode::Locked | Mode::Dnd => {
+            Mode::Locked => {
                 self.refresh_tray();
                 self.publish();
             }
@@ -921,6 +879,7 @@ impl AppState {
             ReplyKind::Coming => "is on the way 🏃",
             ReplyKind::FiveMin => "will come in 5 minutes ⏳",
             ReplyKind::Busy => "is busy right now ⛔",
+            // Only colleagues still on 0.2.x, which had do-not-disturb.
             ReplyKind::Dnd => "is in do-not-disturb — they'll see it later 🔕",
             ReplyKind::Missed => "didn't respond to the alert",
             ReplyKind::InCall => "is in a call — they got a quiet notification 📞",

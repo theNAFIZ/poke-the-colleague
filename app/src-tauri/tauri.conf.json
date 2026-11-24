@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Poke the Colleague",
   "mainBinaryName": "poke-the-colleague",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "identifier": "dev.poke.colleague",
   "build": {
     "frontendDist": "../ui"

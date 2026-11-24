@@ -11,7 +11,7 @@ mod watch;
 
 use std::time::{Duration, SystemTime};
 
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -48,7 +48,6 @@ fn main() {
             commands::parse_invite,
             commands::poke,
             commands::poke_all,
-            commands::set_dnd,
             commands::set_prefs,
             commands::clear_missed,
             commands::reconnect,
@@ -109,12 +108,11 @@ pub fn show_main(app: &AppHandle) {
 
 fn build_tray(app: &AppHandle, state: &Shared) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, "open", "Open Poke", true, None::<&str>)?;
-    let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
     let test = MenuItem::with_id(app, "test", "Show test alert", true, None::<&str>)?;
     let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &dnd, &test, &updates, &sep, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &test, &updates, &sep, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main")
         .tooltip("Poke the Colleague")
@@ -126,9 +124,6 @@ fn build_tray(app: &AppHandle, state: &Shared) -> tauri::Result<()> {
             let state = app.state::<Shared>().inner().clone();
             match event.id.as_ref() {
                 "open" => show_main(app),
-                "dnd" => {
-                    tauri::async_runtime::spawn(async move { state.toggle_dnd() });
-                }
                 "test" => {
                     tauri::async_runtime::spawn(async move { state.test_alert() });
                 }
@@ -167,7 +162,7 @@ fn build_tray(app: &AppHandle, state: &Shared) -> tauri::Result<()> {
         builder = builder.icon(icon.clone());
     }
     let tray = builder.build(app)?;
-    state.attach_tray(tray, dnd);
+    state.attach_tray(tray);
     Ok(())
 }
 

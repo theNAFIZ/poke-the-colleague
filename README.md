@@ -102,7 +102,6 @@ The part after `#` is the **team code**. Anyone who has it can join the team, so
   - Poke only checks *whether* the microphone is in use and by which app. It never listens.
   - You can turn this off under **Settings → Detect calls**.
 - **Screen locked (automatic):** colleagues see **Away 🔒** next to your name. Pokes that arrive while your screen is locked are held back. When you unlock, Poke opens **Activity** with everything you missed, each with a **👋 Poke back** button. The same summary appears when a call ends.
-- **Do not disturb (DND):** use it for demos and screen sharing. Pokes are collected quietly and shown under **Activity**, and the caller is told you're in DND.
 - **Settings → Show a test alert** previews the alert on your own machine.
 - Closing the window keeps Poke running in the tray. Use **Quit** in the tray menu or in Settings to exit.
 
